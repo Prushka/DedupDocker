@@ -36,7 +36,7 @@ func dedup(root string) {
 				log.Infof("%s, %d, %s", file.Path, file.Size, file.MD5)
 			}
 			if err := DeleteDuplicateFiles(files); err != nil {
-				log.Errorf("Error deleting duplicate files: %v", err)
+				log.Fatalf("Error deleting duplicate files: %v", err)
 			}
 		}
 		log.Info()
@@ -62,7 +62,7 @@ func DeleteDuplicateFiles(files []*DupFile) error {
 		}
 		dupFile.SHA512 = fmt.Sprintf("%x", hash)
 		if !bytes.Equal(hash, firstHash) {
-			log.Errorf("Files %s and %s have different content", files[0].Path, dupFile.Path)
+			log.Fatalf("Files %s and %s have different content", files[0].Path, dupFile.Path)
 			return errors.New("files have different content")
 		}
 	}
@@ -132,7 +132,7 @@ func findDuplicates(root string) (map[string][]*DupFile, error) {
 			log.Debugf("Computing MD5 %s", file)
 			hash, err := computeMD5(file)
 			if err != nil {
-				log.Errorf("Error computing MD5 for file %s: %v", file, err)
+				log.Fatalf("Error computing MD5 for file %s: %v", file, err)
 				continue
 			}
 			hashMap[hash] = append(hashMap[hash], &DupFile{Path: file, Size: size, MD5: hash})
@@ -150,7 +150,7 @@ func computeMD5(filePath string) (string, error) {
 	defer func(f *os.File) {
 		err := f.Close()
 		if err != nil {
-			log.Errorf("Error closing file %s: %v", f.Name(), err)
+			log.Fatalf("Error closing file %s: %v", f.Name(), err)
 		}
 	}(f)
 
@@ -170,7 +170,7 @@ func computeSHA512(path string) ([]byte, error) {
 	defer func(f *os.File) {
 		err := f.Close()
 		if err != nil {
-			log.Errorf("Error closing file %s: %v", f.Name(), err)
+			log.Fatalf("Error closing file %s: %v", f.Name(), err)
 		}
 	}(f)
 
