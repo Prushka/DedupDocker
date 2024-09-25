@@ -43,7 +43,7 @@ func dedup(root string) {
 	log.Infof("Total: %d files, %d GB", totalDeleted, totalDeletedSize>>30)
 }
 
-func DeleteDuplicateFiles(files []DupFile) error {
+func DeleteDuplicateFiles(files []*DupFile) error {
 	if len(files) <= 1 {
 		return nil
 	}
@@ -53,23 +53,26 @@ func DeleteDuplicateFiles(files []DupFile) error {
 		return err
 	}
 	for _, dupFile := range files[1:] {
+		log.Debugf("Computing SHA512 for file %s", dupFile.Path)
 		hash, err := computeSHA512(dupFile.Path)
 		if err != nil {
 			return err
 		}
+		dupFile.SHA512 = fmt.Sprintf("%x", hash)
 		if !bytes.Equal(hash, firstHash) {
 			log.Errorf("Files %s and %s have different content", files[0].Path, dupFile.Path)
 			return errors.New("files have different content")
 		}
 	}
+	log.Infof("%x", firstHash)
 	for _, dupFile := range files[1:] {
 		if TheConfig.DoRemove {
 			if err := os.Remove(dupFile.Path); err != nil {
 				return err
 			}
-			log.Infof("Deleted: %s", dupFile.Path)
+			log.Infof("Deleted: %s %s", dupFile.Path, dupFile.SHA512)
 		} else {
-			log.Infof("Would delete: %s", dupFile.Path)
+			log.Infof("Would delete: %s %s", dupFile.Path, dupFile.SHA512)
 		}
 		totalDeleted++
 		totalDeletedSize += dupFile.Size
@@ -78,7 +81,7 @@ func DeleteDuplicateFiles(files []DupFile) error {
 	return nil
 }
 
-func findDuplicates(root string) (map[string][]DupFile, error) {
+func findDuplicates(root string) (map[string][]*DupFile, error) {
 	sizeMap := make(map[int64][]string)
 
 	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
@@ -99,7 +102,7 @@ func findDuplicates(root string) (map[string][]DupFile, error) {
 
 	log.Infof("Total files: %d", len(sizeMap))
 
-	hashMap := make(map[string][]DupFile)
+	hashMap := make(map[string][]*DupFile)
 
 	for size, files := range sizeMap {
 		if len(files) < 2 {
@@ -112,7 +115,7 @@ func findDuplicates(root string) (map[string][]DupFile, error) {
 				log.Errorf("Error computing MD5 for file %s: %v", file, err)
 				continue
 			}
-			hashMap[hash] = append(hashMap[hash], DupFile{Path: file, Size: size, MD5: hash})
+			hashMap[hash] = append(hashMap[hash], &DupFile{Path: file, Size: size, MD5: hash})
 		}
 	}
 
