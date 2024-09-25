@@ -19,6 +19,8 @@ func Configure() {
 		log.Fatalf("error parsing config: %v", err)
 	}
 	switch TheConfig.Log {
+	case "trace":
+		log.SetLevel(log.TraceLevel)
 	case "debug":
 		log.SetLevel(log.DebugLevel)
 	case "info":

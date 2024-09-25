@@ -54,12 +54,14 @@ func DeleteDuplicateFiles(files []*DupFile) error {
 	if err != nil {
 		return err
 	}
+	log.Tracef("SHA512 %s: %x", files[0].Path, firstHash)
 	for _, dupFile := range files[1:] {
 		log.Debugf("Computing SHA512 %s", dupFile.Path)
 		hash, err := computeSHA512(dupFile.Path)
 		if err != nil {
 			return err
 		}
+		log.Tracef("SHA512 %s: %x", dupFile.Path, hash)
 		dupFile.SHA512 = fmt.Sprintf("%x", hash)
 		if !bytes.Equal(hash, firstHash) {
 			log.Fatalf("Files %s and %s have different content", files[0].Path, dupFile.Path)
@@ -135,6 +137,7 @@ func findDuplicates(root string) (map[string][]*DupFile, error) {
 				log.Fatalf("Error computing MD5 for file %s: %v", file, err)
 				continue
 			}
+			log.Tracef("MD5 %s: %s", file, hash)
 			hashMap[hash] = append(hashMap[hash], &DupFile{Path: file, Size: size, MD5: hash})
 		}
 	}
