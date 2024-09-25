@@ -38,8 +38,8 @@ func dedup(root string) {
 			if err := DeleteDuplicateFiles(files); err != nil {
 				log.Fatalf("Error deleting duplicate files: %v", err)
 			}
+			log.Info()
 		}
-		log.Info()
 		c++
 	}
 	log.Infof("Total: %d files, %d GB", totalDeleted, totalDeletedSize>>30)
