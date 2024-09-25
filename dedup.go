@@ -25,7 +25,7 @@ type DupFile struct {
 func dedup(root string) {
 	duplicates, err := findDuplicates(root)
 	if err != nil {
-		log.Fatalf("Error finding duplicates: %v\n", err)
+		log.Fatalf("Error finding duplicates: %v", err)
 	}
 	log.Info()
 	c := 1
