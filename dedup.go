@@ -53,7 +53,7 @@ func DeleteDuplicateFiles(files []*DupFile) error {
 		return err
 	}
 	for _, dupFile := range files[1:] {
-		log.Debugf("Computing SHA512 for file %s", dupFile.Path)
+		log.Debugf("Computing SHA512 %s", dupFile.Path)
 		hash, err := computeSHA512(dupFile.Path)
 		if err != nil {
 			return err
@@ -64,15 +64,14 @@ func DeleteDuplicateFiles(files []*DupFile) error {
 			return errors.New("files have different content")
 		}
 	}
-	log.Infof("%x", firstHash)
 	for _, dupFile := range files[1:] {
 		if TheConfig.DoRemove {
 			if err := os.Remove(dupFile.Path); err != nil {
 				return err
 			}
-			log.Infof("Deleted: %s %s", dupFile.Path, dupFile.SHA512)
+			log.Infof("Deleted: %s", dupFile.Path)
 		} else {
-			log.Infof("Would delete: %s %s", dupFile.Path, dupFile.SHA512)
+			log.Infof("Would delete: %s", dupFile.Path)
 		}
 		totalDeleted++
 		totalDeletedSize += dupFile.Size
@@ -109,7 +108,7 @@ func findDuplicates(root string) (map[string][]*DupFile, error) {
 			continue
 		}
 		for _, file := range files {
-			log.Debugf("Computing MD5 for file %s", file)
+			log.Debugf("Computing MD5 %s", file)
 			hash, err := computeMD5(file)
 			if err != nil {
 				log.Errorf("Error computing MD5 for file %s: %v", file, err)
