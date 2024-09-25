@@ -6,7 +6,7 @@ import (
 )
 
 type Config struct {
-	Root     string `env:"Root" envDefault:"."`
+	Root     string `env:"Root" envDefault:"/dedup"`
 	DoRemove bool   `env:"DoRemove" envDefault:"false"`
 	Log      string `env:"Log" envDefault:"debug"`
 }
