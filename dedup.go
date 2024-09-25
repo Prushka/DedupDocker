@@ -40,7 +40,7 @@ func dedup(root string) {
 		}
 		log.Info()
 	}
-	log.Infof("Total deleted: %d files, %d GB", totalDeleted, totalDeletedSize>>30)
+	log.Infof("Total: %d files, %d GB", totalDeleted, totalDeletedSize>>30)
 }
 
 func DeleteDuplicateFiles(files []DupFile) error {
@@ -106,6 +106,7 @@ func findDuplicates(root string) (map[string][]DupFile, error) {
 			continue
 		}
 		for _, file := range files {
+			log.Debugf("Computing MD5 for file %s", file)
 			hash, err := computeMD5(file)
 			if err != nil {
 				log.Errorf("Error computing MD5 for file %s: %v", file, err)
