@@ -27,18 +27,20 @@ func dedup(root string) {
 	if err != nil {
 		log.Fatalf("Error finding duplicates: %v\n", err)
 	}
-
-	for key, files := range duplicates {
+	log.Info()
+	c := 1
+	for _, files := range duplicates {
 		if len(files) > 1 {
-			log.Infof("Duplicate files: %s", key)
+			log.Infof("Duplicate file %d", c)
 			for _, file := range files {
-				log.Info(file)
+				log.Infof("%s, %d, %s", file.Path, file.Size, file.MD5)
 			}
 			if err := DeleteDuplicateFiles(files); err != nil {
 				log.Errorf("Error deleting duplicate files: %v", err)
 			}
 		}
 		log.Info()
+		c++
 	}
 	log.Infof("Total: %d files, %d GB", totalDeleted, totalDeletedSize>>30)
 }
