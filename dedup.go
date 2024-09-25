@@ -73,7 +73,7 @@ func DeleteDuplicateFiles(files []*DupFile) error {
 		if curr > lenLongestFileName {
 			lenLongestFileName = curr
 			usePath = dupFile.Path
-		} else if curr == lenLongestFileName && len(dupFile.Path) > len(usePath) {
+		} else if curr == lenLongestFileName && len(dupFile.Path) < len(usePath) {
 			usePath = dupFile.Path
 		}
 	}
