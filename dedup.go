@@ -64,7 +64,22 @@ func DeleteDuplicateFiles(files []*DupFile) error {
 			return errors.New("files have different content")
 		}
 	}
-	for _, dupFile := range files[1:] {
+	lenLongestFileName := 0
+	usePath := files[0].Path
+	for _, dupFile := range files {
+		curr := len(filepath.Base(dupFile.Path))
+		if curr > lenLongestFileName {
+			lenLongestFileName = curr
+			usePath = dupFile.Path
+		} else if curr == lenLongestFileName && len(dupFile.Path) > len(usePath) {
+			usePath = dupFile.Path
+		}
+	}
+	c := 0
+	for _, dupFile := range files {
+		if dupFile.Path == usePath {
+			continue
+		}
 		if TheConfig.DoRemove {
 			if err := os.Remove(dupFile.Path); err != nil {
 				return err
@@ -75,6 +90,10 @@ func DeleteDuplicateFiles(files []*DupFile) error {
 		}
 		totalDeleted++
 		totalDeletedSize += dupFile.Size
+		c++
+		if c == len(files)-1 {
+			break
+		}
 	}
 
 	return nil
