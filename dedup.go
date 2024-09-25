@@ -49,7 +49,7 @@ func DeleteDuplicateFiles(files []*DupFile) error {
 	if len(files) <= 1 {
 		return nil
 	}
-
+	log.Debugf("Computing SHA512 %s", files[0].Path)
 	firstHash, err := computeSHA512(files[0].Path)
 	if err != nil {
 		return err
