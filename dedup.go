@@ -45,6 +45,19 @@ func dedup(root string) {
 	log.Infof("Total: %d files, %d GB", totalDeleted, totalDeletedSize>>30)
 }
 
+func remove(dupFile *DupFile) {
+	if TheConfig.DoRemove {
+		if err := os.Remove(dupFile.Path); err != nil {
+			log.Fatalf("Error deleting file %s: %v", dupFile.Path, err)
+		}
+		log.Infof("Deleted: %s", dupFile.Path)
+	} else {
+		log.Infof("Would delete: %s", dupFile.Path)
+	}
+	totalDeleted++
+	totalDeletedSize += dupFile.Size
+}
+
 func DeleteDuplicateFiles(files []*DupFile) error {
 	if len(files) <= 1 {
 		return nil
@@ -68,35 +81,43 @@ func DeleteDuplicateFiles(files []*DupFile) error {
 			return errors.New("files have different content")
 		}
 	}
-	lenLongestFileName := 0
-	usePath := files[0].Path
+	longestFileName := ""
+	shortestDir := ""
 	for _, dupFile := range files {
-		curr := len(filepath.Base(dupFile.Path))
-		if curr > lenLongestFileName {
-			lenLongestFileName = curr
-			usePath = dupFile.Path
-		} else if curr == lenLongestFileName && len(dupFile.Path) < len(usePath) {
-			usePath = dupFile.Path
+		currFileName := filepath.Base(dupFile.Path)
+		currPath := filepath.Dir(dupFile.Path)
+		if len(currFileName) > len(longestFileName) {
+			longestFileName = currFileName
+		}
+		if shortestDir == "" || len(currPath) < len(shortestDir) {
+			shortestDir = currPath
 		}
 	}
 	c := 0
+	var sameDir []*DupFile
 	for _, dupFile := range files {
-		if dupFile.Path == usePath {
+		if filepath.Dir(dupFile.Path) == shortestDir {
+			sameDir = append(sameDir, dupFile)
 			continue
 		}
-		if TheConfig.DoRemove {
-			if err := os.Remove(dupFile.Path); err != nil {
-				return err
-			}
-			log.Infof("Deleted: %s", dupFile.Path)
-		} else {
-			log.Infof("Would delete: %s", dupFile.Path)
-		}
-		totalDeleted++
-		totalDeletedSize += dupFile.Size
+		remove(dupFile)
 		c++
 		if c == len(files)-1 {
 			break
+		}
+	}
+	if len(sameDir) > 1 {
+		for _, file := range sameDir[1:] {
+			remove(file)
+		}
+		newPath := filepath.Join(shortestDir, longestFileName)
+		if TheConfig.DoRemove {
+			if err := os.Rename(sameDir[0].Path, newPath); err != nil {
+				log.Fatalf("Error renaming file %s to %s: %v", sameDir[0].Path, newPath, err)
+			}
+			log.Infof("Renamed: %s to %s", sameDir[0].Path, newPath)
+		} else {
+			log.Infof("Would rename: %s to %s", sameDir[0].Path, newPath)
 		}
 	}
 
