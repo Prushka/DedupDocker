@@ -106,7 +106,7 @@ func DeleteDuplicateFiles(files []*DupFile) error {
 			break
 		}
 	}
-	if len(sameDir) > 1 {
+	if len(sameDir) >= 1 {
 		for _, file := range sameDir[1:] {
 			remove(file)
 		}
