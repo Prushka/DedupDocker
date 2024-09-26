@@ -39,10 +39,14 @@ func dedup(root string) {
 				log.Fatalf("Error deleting duplicate files: %v", err)
 			}
 			log.Info()
+			c++
 		}
-		c++
 	}
 	log.Infof("Total: %d files, %d GB", totalDeleted, totalDeletedSize>>30)
+	_, err = removeEmptyDirs(root)
+	if err != nil {
+		log.Fatalf("Error removing empty directories: %v", err)
+	}
 }
 
 func remove(dupFile *DupFile) {
@@ -110,14 +114,17 @@ func DeleteDuplicateFiles(files []*DupFile) error {
 		for _, file := range sameDir[1:] {
 			remove(file)
 		}
-		newPath := filepath.Join(shortestDir, longestFileName)
-		if TheConfig.DoRemove {
-			if err := os.Rename(sameDir[0].Path, newPath); err != nil {
-				log.Fatalf("Error renaming file %s to %s: %v", sameDir[0].Path, newPath, err)
+		oldFileName := filepath.Base(sameDir[0].Path)
+		if len(oldFileName) < len(longestFileName) {
+			newPath := filepath.Join(shortestDir, longestFileName)
+			if TheConfig.DoRemove {
+				if err := os.Rename(sameDir[0].Path, newPath); err != nil {
+					log.Fatalf("Error renaming file %s to %s: %v", sameDir[0].Path, newPath, err)
+				}
+				log.Infof("Renamed: %s to %s", sameDir[0].Path, newPath)
+			} else {
+				log.Infof("Would rename: %s to %s", sameDir[0].Path, newPath)
 			}
-			log.Infof("Renamed: %s to %s", sameDir[0].Path, newPath)
-		} else {
-			log.Infof("Would rename: %s to %s", sameDir[0].Path, newPath)
 		}
 	}
 
