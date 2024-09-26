@@ -6,9 +6,10 @@ import (
 )
 
 type Config struct {
-	Root     string `env:"ROOT" envDefault:"/dedup"`
-	DoRemove bool   `env:"DO_REMOVE" envDefault:"false"`
-	Log      string `env:"LOG" envDefault:"debug"`
+	Root         string `env:"ROOT" envDefault:"/dedup"`
+	DoRemove     bool   `env:"DO_REMOVE" envDefault:"false"`
+	Log          string `env:"LOG" envDefault:"debug"`
+	EmptyDirOnly bool   `env:"EMPTY_DIR_ONLY" envDefault:"false"`
 }
 
 var TheConfig = &Config{}
