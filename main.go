@@ -7,14 +7,18 @@ import (
 func main() {
 	Configure()
 	if TheConfig.Dedup {
-		log.Info("Removing duplicates")
-		dedup(TheConfig.Root)
+		for _, root := range TheConfig.Roots {
+			log.Infof("Deduping %s", root)
+			dedup(root)
+		}
 	}
 	if TheConfig.EmptyDir {
-		log.Info("Removing empty folders")
-		_, err := removeEmptyDirs(TheConfig.Root)
-		if err != nil {
-			log.Fatalf("Error removing empty directories: %v", err)
+		for _, root := range TheConfig.Roots {
+			log.Infof("Removing empty folders in %s", root)
+			_, err := removeEmptyDirs(root)
+			if err != nil {
+				log.Fatalf("Error removing empty folders: %v", err)
+			}
 		}
 	}
 
