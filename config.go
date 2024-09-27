@@ -9,7 +9,7 @@ type Config struct {
 	Root     string `env:"ROOT" envDefault:"/dedup"`
 	DoRemove bool   `env:"DO_REMOVE" envDefault:"false"`
 	Log      string `env:"LOG" envDefault:"debug"`
-	EmptyDir bool   `env:"EMPTY_DIR" envDefault:"true"`
+	EmptyDir bool   `env:"EMPTY_DIR" envDefault:"false"`
 	Dedup    bool   `env:"DEDUP" envDefault:"true"`
 	MinSize  int64  `env:"MIN_SIZE" envDefault:"0"`
 }
