@@ -43,10 +43,6 @@ func dedup(root string) {
 		}
 	}
 	log.Infof("Total: %d files, %d GB", totalDeleted, totalDeletedSize>>30)
-	_, err = removeEmptyDirs(root)
-	if err != nil {
-		log.Fatalf("Error removing empty directories: %v", err)
-	}
 }
 
 func remove(dupFile *DupFile) {
@@ -143,7 +139,9 @@ func findDuplicates(root string) (map[string][]*DupFile, error) {
 		}
 
 		size := info.Size()
-		sizeMap[size] = append(sizeMap[size], path)
+		if size >= TheConfig.MinSize {
+			sizeMap[size] = append(sizeMap[size], path)
+		}
 		return nil
 	})
 	if err != nil {
