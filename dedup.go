@@ -137,6 +137,10 @@ func findDuplicates(root string) (map[string][]*DupFile, error) {
 		if !info.Mode().IsRegular() {
 			return nil
 		}
+		ext := filepath.Ext(path)
+		if TheConfig.IsExcluded(ext) {
+			return nil
+		}
 
 		size := info.Size()
 		if size >= TheConfig.MinSize {

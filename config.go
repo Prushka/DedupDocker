@@ -3,18 +3,29 @@ package main
 import (
 	"github.com/caarlos0/env"
 	log "github.com/sirupsen/logrus"
+	"strings"
 )
 
 type Config struct {
-	Roots    []string `env:"ROOT" envDefault:"/dedup"`
-	DoRemove bool     `env:"DO_REMOVE" envDefault:"false"`
-	Log      string   `env:"LOG" envDefault:"debug"`
-	EmptyDir bool     `env:"EMPTY_DIR" envDefault:"false"`
-	Dedup    bool     `env:"DEDUP" envDefault:"true"`
-	MinSize  int64    `env:"MIN_SIZE" envDefault:"0"`
+	Roots      []string `env:"ROOT" envDefault:"/dedup"`
+	DoRemove   bool     `env:"DO_REMOVE" envDefault:"false"`
+	Log        string   `env:"LOG" envDefault:"debug"`
+	EmptyDir   bool     `env:"EMPTY_DIR" envDefault:"false"`
+	Dedup      bool     `env:"DEDUP" envDefault:"true"`
+	MinSize    int64    `env:"MIN_SIZE" envDefault:"0"`
+	ExcludeExt []string `env:"EXCLUDE_EXT" envDefault:""`
 }
 
 var TheConfig = &Config{}
+
+func (c *Config) IsExcluded(ext string) bool {
+	for _, e := range c.ExcludeExt {
+		if strings.ToLower(e) == strings.ToLower(ext) {
+			return true
+		}
+	}
+	return false
+}
 
 func Configure() {
 	err := env.Parse(TheConfig)
