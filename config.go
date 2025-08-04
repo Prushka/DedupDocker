@@ -15,6 +15,7 @@ type Config struct {
 	MinSize              int64    `env:"MIN_SIZE" envDefault:"0"`
 	ExcludeExt           []string `env:"EXCLUDE_EXT" envDefault:""`
 	DeleteFilesIncluding []string `env:"DELETE_FILES_INCLUDING" envDefault:""`
+	IgnoreKeywords       []string `env:"IGNORE_KEYWORDS" envDefault:""`
 }
 
 var TheConfig = &Config{}

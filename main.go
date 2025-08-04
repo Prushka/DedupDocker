@@ -7,6 +7,24 @@ import (
 	"strings"
 )
 
+func del(path string) error {
+	for _, keyword := range TheConfig.IgnoreKeywords {
+		if strings.Contains(strings.ToLower(path), strings.ToLower(keyword)) {
+			return nil
+		}
+	}
+	if TheConfig.DoRemove {
+		if err := os.Remove(path); err != nil {
+			log.Errorf("Error deleting file %s: %v", path, err)
+			return err
+		}
+		log.Infof("Deleted: %s", path)
+	} else {
+		log.Infof("Would delete: %s", path)
+	}
+	return nil
+}
+
 func deleteFilesIncluding(root string) (int, error) {
 	var deletedCount int
 
@@ -19,14 +37,9 @@ func deleteFilesIncluding(root string) (int, error) {
 		}
 		for _, substr := range TheConfig.DeleteFilesIncluding {
 			if strings.Contains(info.Name(), substr) {
-				if TheConfig.DoRemove {
-					if err := os.Remove(path); err != nil {
-						log.Errorf("Error deleting file %s: %v", path, err)
-						return err
-					}
-					log.Infof("Deleted: %s", path)
-				} else {
-					log.Infof("Would delete: %s", path)
+				err = del(path)
+				if err != nil {
+					return err
 				}
 				deletedCount++
 				break

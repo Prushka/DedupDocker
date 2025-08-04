@@ -46,13 +46,9 @@ func dedup(root string) {
 }
 
 func remove(dupFile *DupFile) {
-	if TheConfig.DoRemove {
-		if err := os.Remove(dupFile.Path); err != nil {
-			log.Fatalf("Error deleting file %s: %v", dupFile.Path, err)
-		}
-		log.Infof("Deleted: %s", dupFile.Path)
-	} else {
-		log.Infof("Would delete: %s", dupFile.Path)
+	err := del(dupFile.Path)
+	if err != nil {
+		panic(err)
 	}
 	totalDeleted++
 	totalDeletedSize += dupFile.Size

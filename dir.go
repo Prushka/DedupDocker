@@ -20,13 +20,9 @@ func removeDir(path string) {
 		log.Fatalf("The path %s is not a directory", path)
 	}
 
-	if TheConfig.DoRemove {
-		if err := os.Remove(path); err != nil {
-			log.Fatalf("Failed to remove directory %s: %s", path, err)
-		}
-		log.Infof("Deleted folder: %s", path)
-	} else {
-		log.Infof("Would delete folder: %s", path)
+	err = del(path)
+	if err != nil {
+		panic(err)
 	}
 }
 
