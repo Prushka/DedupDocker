@@ -15,7 +15,6 @@ func del(path string) error {
 	}
 	if TheConfig.DoRemove {
 		if err := os.Remove(path); err != nil {
-			log.Errorf("Error deleting file %s: %v", path, err)
 			return err
 		}
 		log.Infof("Deleted: %s", path)
