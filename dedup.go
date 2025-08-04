@@ -109,13 +109,9 @@ func DeleteDuplicateFiles(files []*DupFile) error {
 		oldFileName := filepath.Base(sameDir[0].Path)
 		if len(oldFileName) < len(longestFileName) {
 			newPath := filepath.Join(shortestDir, longestFileName)
-			if TheConfig.DoRemove {
-				if err := os.Rename(sameDir[0].Path, newPath); err != nil {
-					log.Fatalf("Error renaming file %s to %s: %v", sameDir[0].Path, newPath, err)
-				}
-				log.Infof("Renamed: %s to %s", sameDir[0].Path, newPath)
-			} else {
-				log.Infof("Would rename: %s to %s", sameDir[0].Path, newPath)
+			err = rename(sameDir[0].Path, newPath)
+			if err != nil {
+				panic(err)
 			}
 		}
 	}

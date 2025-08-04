@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	log "github.com/sirupsen/logrus"
 	"os"
 	"path/filepath"
@@ -15,11 +16,29 @@ func del(path string) error {
 	}
 	if TheConfig.DoRemove {
 		if err := os.Remove(path); err != nil {
-			return err
+			return fmt.Errorf("error deleting file %s", path)
 		}
 		log.Infof("Deleted: %s", path)
 	} else {
 		log.Infof("Would delete: %s", path)
+	}
+	return nil
+}
+
+func rename(oldPath, newPath string) error {
+	for _, keyword := range TheConfig.IgnoreKeywords {
+		if strings.Contains(strings.ToLower(oldPath), strings.ToLower(keyword)) ||
+			strings.Contains(strings.ToLower(newPath), strings.ToLower(keyword)) {
+			return nil
+		}
+	}
+	if TheConfig.DoRemove {
+		if err := os.Rename(oldPath, newPath); err != nil {
+			return fmt.Errorf("error renaming file %s to %s: %w", oldPath, newPath, err)
+		}
+		log.Infof("Renamed: %s -> %s", oldPath, newPath)
+	} else {
+		log.Infof("Would rename: %s -> %s", oldPath, newPath)
 	}
 	return nil
 }
