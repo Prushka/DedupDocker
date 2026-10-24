@@ -1,0 +1,10 @@
+.git
+.github
+.idea
+.env
+.env.*
+AGENTS.md
+README.md
+scripts/ci
+dedup
+dedup.exe
