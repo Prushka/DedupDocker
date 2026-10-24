@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"fmt"
@@ -69,7 +69,8 @@ func deleteFilesIncluding(root string) (int, error) {
 	return deletedCount, err
 }
 
-func main() {
+// Run configures and runs the file cleanup operations.
+func Run() {
 	Configure()
 	if len(TheConfig.DeleteFilesIncluding) > 0 {
 		for _, root := range TheConfig.Roots {
