@@ -5,25 +5,6 @@ set -euo pipefail
 
 fixture="$(mktemp -d)"
 trap 'rm -rf -- "$fixture"' EXIT
-mkdir -p "$fixture/data/nested" "$fixture/data/empty/nested" "$fixture/data/metadata"
-mkdir -p "$fixture/expected/nested"
-
-printf 'duplicate content\n' > "$fixture/data/a-original.txt"
-cp "$fixture/data/a-original.txt" "$fixture/data/nested/longer-duplicate-name.txt"
-printf 'unique content to preserve\n' > "$fixture/data/keep.txt"
-printf 'delete by filename\n' > "$fixture/data/delete-me.tmp"
-printf 'keep because of ignored keyword\n' > "$fixture/data/protected-delete-me.tmp"
-printf 'excluded duplicate content\n' > "$fixture/data/first.skip"
-cp "$fixture/data/first.skip" "$fixture/data/nested/second.skip"
-printf 'x' > "$fixture/data/small-a.txt"
-cp "$fixture/data/small-a.txt" "$fixture/data/small-b.txt"
-printf 'finder metadata\n' > "$fixture/data/metadata/.DS_Store"
-
-cp "$fixture/data/a-original.txt" "$fixture/expected/longer-duplicate-name.txt"
-for file in keep.txt protected-delete-me.tmp first.skip small-a.txt small-b.txt; do
-  cp "$fixture/data/$file" "$fixture/expected/$file"
-done
-cp "$fixture/data/nested/second.skip" "$fixture/expected/nested/second.skip"
 
 snapshot() {
   (
@@ -35,24 +16,66 @@ snapshot() {
 
 run_cleanup() {
   docker run --rm --network none --read-only \
-    --mount "type=bind,src=$fixture/data,dst=/dedup$1" \
-    -e LOG=debug -e EMPTY_DIR=true -e MIN_SIZE=4 -e EXCLUDE_EXT=.skip \
-    -e DELETE_FILES_INCLUDING=delete-me -e IGNORE_KEYWORDS=protected \
+    --mount "type=bind,src=$data,dst=/dedup$1" \
+    -e MODE="$mode" -e LOG=debug -e EMPTY_DIR=true -e MIN_SIZE=4 -e EXCLUDE_EXT=.skip \
+    -e DELETE_FILES_INCLUDING=delete-me,remove-me -e IGNORE_KEYWORDS=protected \
     "${@:2}" "$LOCAL_IMAGE"
 }
 
-# Exercise the default dry run with a read-only fixture and verify every file.
-before="$(snapshot "$fixture/data")"
-dry_run="$(run_cleanup ',readonly' 2>&1)"
-printf '%s\n' "$dry_run"
-grep -Fq 'Would delete:' <<< "$dry_run"
-grep -Fq 'Would rename:' <<< "$dry_run"
-test "$before" = "$(snapshot "$fixture/data")"
+for mode in dedup delete-files-including flatten; do
+  data="$fixture/$mode/data"
+  expected="$fixture/$mode/expected"
+  mkdir -p "$data/child/nested" "$data/empty/nested" "$data/metadata" "$expected"
+  printf 'duplicate content\n' > "$data/a-original.txt"
+  cp "$data/a-original.txt" "$data/child/nested/longer-duplicate-name.txt"
+  printf 'unique content to preserve\n' > "$data/keep.txt"
+  printf 'delete by filename\n' > "$data/delete-me.tmp"
+  printf 'second matching filename\n' > "$data/remove-me.tmp"
+  printf 'keep because of ignored keyword\n' > "$data/protected-delete-me.tmp"
+  printf 'excluded duplicate content\n' > "$data/first.skip"
+  cp "$data/first.skip" "$data/child/nested/second.skip"
+  printf 'x' > "$data/small-delete-me.txt"
+  cp "$data/small-delete-me.txt" "$data/child/nested/small-remove-me.txt"
+  printf 'finder metadata\n' > "$data/metadata/.DS_Store"
+  printf 'existing destination\n' > "$data/child/existing.txt"
+  printf 'nested content with the same filename\n' > "$data/child/nested/existing.txt"
+  cp -a "$data/." "$expected/"
 
-# Apply changes only to this disposable fixture, then compare names and contents.
-run_cleanup '' -e DO_REMOVE=true
-snapshot "$fixture/expected" > "$fixture/expected.snapshot"
-snapshot "$fixture/data" > "$fixture/actual.snapshot"
-diff -u "$fixture/expected.snapshot" "$fixture/actual.snapshot"
+  case "$mode" in
+    dedup)
+      mv "$expected/a-original.txt" "$expected/longer-duplicate-name.txt"
+      rm "$expected/child/nested/longer-duplicate-name.txt" "$expected/metadata/.DS_Store"
+      rmdir "$expected/empty/nested" "$expected/empty" "$expected/metadata"
+      ;;
+    delete-files-including)
+      rm "$expected/delete-me.tmp" "$expected/remove-me.tmp"
+      ;;
+    flatten)
+      mv "$expected/child/nested/longer-duplicate-name.txt" "$expected/child/longer-duplicate-name.txt"
+      mv "$expected/child/nested/existing.txt" "$expected/child/existing (1).txt"
+      rmdir "$expected/empty/nested"
+      ;;
+  esac
 
-echo 'Container passed dry-run, duplicate removal and rename, filename deletion, empty directory, ignored keyword, extension and minimum-size checks.'
+  # DRY_RUN defaults to true. A read-only mount also catches attempted writes.
+  before="$(snapshot "$data")"
+  dry_run="$(run_cleanup ',readonly' 2>&1)"
+  printf '%s\n' "$dry_run"
+  grep -Fq 'Would ' <<< "$dry_run"
+  test "$before" = "$(snapshot "$data")"
+
+  run_cleanup '' -e DRY_RUN=false
+  snapshot "$expected" > "$fixture/expected.snapshot"
+  snapshot "$data" > "$fixture/actual.snapshot"
+  diff -u "$fixture/expected.snapshot" "$fixture/actual.snapshot"
+
+  # Invalid modes must fail before making any edits, even with DRY_RUN=false.
+  before="$(snapshot "$data")"
+  if run_cleanup ',readonly' -e MODE=invalid -e DRY_RUN=false; then
+    echo 'Invalid mode unexpectedly succeeded.' >&2
+    exit 1
+  fi
+  test "$before" = "$(snapshot "$data")"
+done
+
+echo 'All modes passed default dry-run, cleanup, shared filters, collision preservation and invalid-mode checks.'

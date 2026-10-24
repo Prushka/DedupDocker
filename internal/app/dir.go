@@ -1,64 +1,41 @@
 package app
 
 import (
-	"fmt"
-	log "github.com/sirupsen/logrus"
-	"os"
 	"path/filepath"
+	"sort"
 )
 
-func removeDir(path string) {
-	fileInfo, err := os.Stat(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			log.Fatalf("The path %s does not exist", path)
-		} else {
-			log.Fatalf("Error accessing the path %s: %v", path, err)
-		}
-	}
-	if !fileInfo.IsDir() {
-		log.Fatalf("The path %s is not a directory", path)
-	}
-
-	err = del(path)
-	if err != nil {
-		panic(err)
-	}
-}
-
-func removeEmptyDirs(dir string) (bool, error) {
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return false, fmt.Errorf("failed to read directory %q: %w", dir, err)
-	}
-
-	isEmpty := true
-	for _, entry := range entries {
-		fullPath := filepath.Join(dir, entry.Name())
-
-		if entry.IsDir() {
-			empty, err := removeEmptyDirs(fullPath)
-			if err != nil {
-				return false, err
-			}
-			if empty {
-				removeDir(fullPath)
-			} else {
-				isEmpty = false
-			}
-		} else {
-			if entry.Name() == ".DS_Store" {
-				fInfo, err := entry.Info()
-				if err != nil {
-					return false, fmt.Errorf("failed to get file info for %q: %w", fullPath, err)
-				}
-				size := fInfo.Size()
-				remove(&DupFile{Path: fullPath, Size: size})
-			} else {
-				isEmpty = false
+func (t *tree) planEmptyDirs(config Config, planned *plan, removeMetadata, keepChildren bool) {
+	if removeMetadata {
+		for _, entry := range t.sortedNodes() {
+			if filepath.Base(entry.path) == ".DS_Store" && config.includes(entry.path, entry.file.info) {
+				t.planDelete(planned, entry, nil)
 			}
 		}
 	}
-
-	return isEmpty, nil
+	var directories []*node
+	for _, entry := range t.nodes {
+		if entry.file.info.IsDir() {
+			directories = append(directories, entry)
+		}
+	}
+	// Descendants always precede their parents, including in a dry-run plan.
+	sort.Slice(directories, func(i, j int) bool {
+		if len(directories[i].path) != len(directories[j].path) {
+			return len(directories[i].path) > len(directories[j].path)
+		}
+		return directories[i].path < directories[j].path
+	})
+	for _, directory := range directories {
+		if pathKey(directory.path) == pathKey(t.root) || config.ignored(directory.path) ||
+			(keepChildren && pathKey(filepath.Dir(directory.path)) == pathKey(t.root)) {
+			continue
+		}
+		if t.children[pathKey(directory.path)] == 0 {
+			planned.operations = append(planned.operations, operation{
+				kind: "rmdir", root: t.root, from: directory.path, file: directory.file,
+			})
+			t.remove(directory.path)
+		}
+	}
 }

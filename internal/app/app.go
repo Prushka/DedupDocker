@@ -2,100 +2,297 @@ package app
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
+	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
+
+	log "github.com/sirupsen/logrus"
 )
 
-func del(path string) error {
-	for _, keyword := range TheConfig.IgnoreKeywords {
-		if strings.Contains(strings.ToLower(path), strings.ToLower(keyword)) {
-			return nil
-		}
-	}
-	if TheConfig.DoRemove {
-		if err := os.Remove(path); err != nil {
-			return fmt.Errorf("error deleting file %s", path)
-		}
-		log.Infof("Deleted: %s", path)
-	} else {
-		log.Infof("Would delete: %s", path)
-	}
-	return nil
+type fileRecord struct {
+	path string
+	info os.FileInfo
 }
 
-func rename(oldPath, newPath string) error {
-	for _, keyword := range TheConfig.IgnoreKeywords {
-		if strings.Contains(strings.ToLower(oldPath), strings.ToLower(keyword)) ||
-			strings.Contains(strings.ToLower(newPath), strings.ToLower(keyword)) {
-			return nil
-		}
-	}
-	if TheConfig.DoRemove {
-		if err := os.Rename(oldPath, newPath); err != nil {
-			return fmt.Errorf("error renaming file %s to %s: %w", oldPath, newPath, err)
-		}
-		log.Infof("Renamed: %s -> %s", oldPath, newPath)
-	} else {
-		log.Infof("Would rename: %s -> %s", oldPath, newPath)
-	}
-	return nil
+type node struct {
+	path string
+	file *fileRecord
 }
 
-func deleteFilesIncluding(root string) (int, error) {
-	var deletedCount int
+type tree struct {
+	root     string
+	nodes    map[string]*node
+	children map[string]int
+}
 
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+type operation struct {
+	kind   string
+	root   string
+	from   string
+	to     string
+	file   *fileRecord
+	keeper *fileRecord
+}
+
+type plan struct {
+	operations []operation
+	dirs       map[string]os.FileInfo
+}
+
+func pathKey(path string) string {
+	path = filepath.Clean(path)
+	if runtime.GOOS == "windows" {
+		path = strings.ToLower(path)
+	}
+	return path
+}
+
+// Run loads the environment, plans the selected mode, and applies or previews it.
+func Run() error {
+	config, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	return run(config, os.Stderr)
+}
+
+func run(config Config, output io.Writer) error {
+	config, err := config.normalized()
+	if err != nil {
+		return err
+	}
+	logger := log.New()
+	logger.SetOutput(output)
+	level, _ := log.ParseLevel(config.Log)
+	logger.SetLevel(level)
+	planned, err := buildPlan(config, logger)
+	if err != nil {
+		return err
+	}
+	return planned.execute(config.DryRun, logger)
+}
+
+func scanTree(root string, config Config, planned *plan) (*tree, error) {
+	result := &tree{root: root, nodes: make(map[string]*node), children: make(map[string]int)}
+	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return fmt.Errorf("scan %q: %w", path, walkErr)
+		}
+		info, err := entry.Info()
 		if err != nil {
-			return err
+			return fmt.Errorf("inspect %q: %w", path, err)
 		}
-		if !info.Mode().IsRegular() {
-			return nil
+		record := &fileRecord{path: path, info: info}
+		if !config.ignored(path) && (info.IsDir() || config.includes(path, info)) {
+			record, err = newFileRecord(path, info)
+			if err != nil {
+				return err
+			}
 		}
-		for _, substr := range TheConfig.DeleteFilesIncluding {
-			if strings.Contains(info.Name(), substr) {
-				err = del(path)
-				if err != nil {
-					return err
-				}
-				deletedCount++
-				break
+		result.add(&node{path: path, file: record})
+		if info.IsDir() {
+			planned.dirs[pathKey(path)] = info
+			if config.ignored(path) {
+				return filepath.SkipDir
 			}
 		}
 		return nil
 	})
-
-	return deletedCount, err
+	return result, err
 }
 
-// Run configures and runs the file cleanup operations.
-func Run() {
-	Configure()
-	if len(TheConfig.DeleteFilesIncluding) > 0 {
-		for _, root := range TheConfig.Roots {
-			log.Infof("Deleting files with %v in %s", TheConfig.DeleteFilesIncluding, root)
-			count, err := deleteFilesIncluding(root)
-			if err != nil {
-				log.Fatalf("Error deleting files: %v", err)
+func (t *tree) add(entry *node) {
+	t.nodes[pathKey(entry.path)] = entry
+	t.children[pathKey(filepath.Dir(entry.path))]++
+}
+
+func (t *tree) remove(path string) {
+	delete(t.nodes, pathKey(path))
+	t.children[pathKey(filepath.Dir(path))]--
+}
+
+func (t *tree) sortedNodes() []*node {
+	entries := make([]*node, 0, len(t.nodes))
+	for _, entry := range t.nodes {
+		entries = append(entries, entry)
+	}
+	sort.Slice(entries, func(i, j int) bool { return entries[i].path < entries[j].path })
+	return entries
+}
+
+func buildPlan(config Config, logger *log.Logger) (*plan, error) {
+	planned := &plan{dirs: make(map[string]os.FileInfo)}
+	for _, root := range config.Roots {
+		logger.Infof("Planning mode=%s dry_run=%t root=%s", config.Mode, config.DryRun, root)
+		files, err := scanTree(root, config, planned)
+		if err != nil {
+			return nil, err
+		}
+		switch config.Mode {
+		case ModeDedup:
+			if err := files.planDedup(config, planned, logger); err != nil {
+				return nil, err
 			}
-			log.Infof("Deleted %d files", count)
+			if config.EmptyDir {
+				files.planEmptyDirs(config, planned, true, false)
+			}
+		case ModeDeleteFilesIncluding:
+			for _, entry := range files.sortedNodes() {
+				if !config.includes(entry.path, entry.file.info) {
+					continue
+				}
+				for _, substring := range config.DeleteFilesIncluding {
+					if strings.Contains(filepath.Base(entry.path), substring) {
+						files.planDelete(planned, entry, nil)
+						break
+					}
+				}
+			}
+		case ModeFlatten:
+			files.planFlatten(config, planned)
+			files.planEmptyDirs(config, planned, false, true)
 		}
 	}
-	if TheConfig.Dedup {
-		for _, root := range TheConfig.Roots {
-			log.Infof("Deduping %s", root)
-			dedup(root)
+	return planned, nil
+}
+
+func (t *tree) planDelete(planned *plan, entry *node, keeper *fileRecord) {
+	planned.operations = append(planned.operations, operation{
+		kind: "delete", root: t.root, from: entry.path, file: entry.file, keeper: keeper,
+	})
+	t.remove(entry.path)
+}
+
+func (t *tree) planMove(planned *plan, entry *node, target string) {
+	planned.operations = append(planned.operations, operation{
+		kind: "move", root: t.root, from: entry.path, to: target, file: entry.file,
+	})
+	t.remove(entry.path)
+	entry.path = target
+	t.add(entry)
+}
+
+func (p *plan) verifyParents(root, path string) error {
+	for parent := filepath.Dir(path); ; parent = filepath.Dir(parent) {
+		expected, ok := p.dirs[pathKey(parent)]
+		if !ok || !within(root, parent) {
+			return fmt.Errorf("unplanned parent directory %q", parent)
+		}
+		actual, err := os.Lstat(parent)
+		if err != nil {
+			return fmt.Errorf("inspect parent %q: %w", parent, err)
+		}
+		if !actual.IsDir() || !os.SameFile(expected, actual) {
+			return fmt.Errorf("parent directory changed: %q", parent)
+		}
+		if pathKey(parent) == pathKey(root) {
+			return nil
 		}
 	}
-	if TheConfig.EmptyDir {
-		for _, root := range TheConfig.Roots {
-			log.Infof("Removing empty folders in %s", root)
-			_, err := removeEmptyDirs(root)
-			if err != nil {
-				log.Fatalf("Error removing empty folders: %v", err)
+}
+
+func (p *plan) execute(dryRun bool, logger *log.Logger) error {
+	// Preflight every original source before the first edit, including sources
+	// that an earlier planned move will relocate.
+	checked := make(map[*fileRecord]bool)
+	for _, op := range p.operations {
+		if err := p.verifyParents(op.root, op.from); err != nil {
+			return err
+		}
+		if op.to != "" {
+			if err := p.verifyParents(op.root, op.to); err != nil {
+				return err
+			}
+		}
+		for _, file := range []*fileRecord{op.file, op.keeper} {
+			if file != nil && !checked[file] {
+				if err := file.verify(); err != nil {
+					return err
+				}
+				checked[file] = true
 			}
 		}
 	}
 
+	current := make(map[*fileRecord]*fileRecord)
+	lookup := func(file *fileRecord) *fileRecord {
+		if updated := current[file]; updated != nil {
+			return updated
+		}
+		return file
+	}
+	var deleted, moved, directories int
+	var bytesDeleted int64
+	for _, op := range p.operations {
+		if err := p.verifyParents(op.root, op.from); err != nil {
+			return err
+		}
+		if !dryRun {
+			file := lookup(op.file)
+			switch op.kind {
+			case "move":
+				if err := p.verifyParents(op.root, op.to); err != nil {
+					return err
+				}
+				updated, err := moveNoReplace(file, op.to)
+				if err != nil {
+					return err
+				}
+				current[op.file] = updated
+			case "delete":
+				if op.keeper != nil {
+					keeper := lookup(op.keeper)
+					if err := p.verifyParents(op.root, keeper.path); err != nil {
+						return err
+					}
+					equal, err := sameContents(file, keeper)
+					if err != nil {
+						return err
+					}
+					if !equal {
+						return fmt.Errorf("duplicate content changed: %q and %q", file.path, keeper.path)
+					}
+				}
+				if err := file.verify(); err != nil {
+					return err
+				}
+				if err := os.Remove(file.path); err != nil {
+					return fmt.Errorf("delete %q: %w", file.path, err)
+				}
+			case "rmdir":
+				if err := file.verify(); err != nil {
+					return err
+				}
+				// Remove never recursively deletes a directory that acquired files.
+				if err := os.Remove(op.from); err != nil {
+					return fmt.Errorf("remove empty directory %q: %w", op.from, err)
+				}
+			}
+		}
+		prefix := ""
+		if dryRun {
+			prefix = "Would "
+		}
+		switch op.kind {
+		case "move":
+			moved++
+			logger.Infof("%smove: %s -> %s", prefix, op.from, op.to)
+		case "delete":
+			deleted++
+			bytesDeleted += op.file.info.Size()
+			logger.Infof("%sdelete: %s", prefix, op.from)
+		case "rmdir":
+			directories++
+			logger.Infof("%sremove empty directory: %s", prefix, op.from)
+		}
+	}
+	if dryRun {
+		logger.Infof("Dry run: would delete %d files (%d bytes), move %d files, and remove %d empty directories", deleted, bytesDeleted, moved, directories)
+	} else {
+		logger.Infof("%d files deleted (%d bytes), %d files moved, %d empty directories removed", deleted, bytesDeleted, moved, directories)
+	}
+	return nil
 }
