@@ -64,11 +64,11 @@ for run_user in 0:0 "$(id -u):$(id -g)"; do
     exit 1
   fi
   test "$(cat "$data/UPPER/existing.txt")" = 'existing destination'
-  test "$(cat "$data/UPPER (1)/inputs/file.txt")" = 'archive payload'
+  test "$(cat "$data/UPPER (1)/file.txt")" = 'archive payload'
   test "$(cat "$data/encrypted/inputs/second.txt")" = 'second payload'
   test "$(cat "$data/bundle/inputs/file.txt")" = 'archive payload'
   test "$(cat "$data/image/inputs/file.txt")" = 'archive payload'
-  test "$(stat -c '%u:%g' "$data/UPPER (1)/inputs/file.txt")" = "$(id -u):$(id -g)"
+  test "$(stat -c '%u:%g' "$data/UPPER (1)/file.txt")" = "$(id -u):$(id -g)"
   test -f "$data/protected.zip"
   for archive in UPPER.ZIP encrypted.7z bundle.tar.gz image.wim; do
     test ! -e "$data/$archive"
