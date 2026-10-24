@@ -111,7 +111,7 @@ func captureFile(file *fileRecord, identityOnly, read bool) (capturedFile, error
 	if err := validateCaptured(file, info, identityOnly); err != nil {
 		return nil, errors.Join(err, guard.close())
 	}
-	guard.captured = &fileRecord{path: guard.fd.Name(), info: info}
+	guard.captured = &fileRecord{path: guard.fd.Name(), info: info, ctx: file.ctx}
 	return guard, nil
 }
 
@@ -145,7 +145,7 @@ func (file *linuxCapturedFile) move(destination string) (*fileRecord, error) {
 		return nil, &os.LinkError{Op: "move without replacement", Old: file.original.path, New: destination, Err: err}
 	}
 	file.active = false
-	result := &fileRecord{path: destination, info: file.captured.info}
+	result := &fileRecord{path: destination, info: file.captured.info, ctx: file.original.ctx}
 	if err := result.verify(); err != nil {
 		// The original was verified while private, and the rename was atomic.
 		// A changed public destination belongs to another actor. Moving that

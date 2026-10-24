@@ -173,7 +173,7 @@ func captureFile(file *fileRecord, identityOnly, read bool) (capturedFile, error
 	if err := validateCaptured(file, info, identityOnly); err != nil {
 		return nil, errors.Join(err, guard.close())
 	}
-	guard.captured = &fileRecord{path: file.path, info: info}
+	guard.captured = &fileRecord{path: file.path, info: info, ctx: file.ctx}
 	return guard, nil
 }
 
@@ -246,7 +246,7 @@ func (file *windowsCapturedFile) move(destination string) (*fileRecord, error) {
 	if err := renameWindowsHandle(file.fd, parent, filepath.Base(destination)); err != nil {
 		return nil, &os.LinkError{Op: "move without replacement", Old: file.original.path, New: destination, Err: err}
 	}
-	result := &fileRecord{path: destination, info: file.captured.info}
+	result := &fileRecord{path: destination, info: file.captured.info, ctx: file.original.ctx}
 	if err := result.verify(); err != nil {
 		rollbackErr := renameWindowsHandle(file.fd, file.parent, filepath.Base(file.original.path))
 		if rollbackErr != nil {

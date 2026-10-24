@@ -94,8 +94,21 @@ transaction. Native moves preserve file attributes and additional streams.
 Copy-based moves preserve file permissions and modification time and verify the
 copied contents before removing the source. If a copy cannot preserve additional
 streams or extended attributes, it fails with the source intact.
+On Linux, copies also preserve the owner and group; insufficient permissions or
+inherited destination ACLs cause an error with the source intact. The destination
+file and its parent directory are synced before removing a copied source.
+Nested mount points remain in place when empty, and repeated directory identities
+through bind mounts are rejected before edits to prevent overlapping work or loops.
 The guarded file operations support Linux and Windows. Other platforms return
 an unsupported-operation error instead of using unguarded destructive operations.
+
+The command handles `SIGTERM` (including `docker stop`) and interrupt signals by
+canceling long reads and restoring staged files before exiting. Forced termination
+or a machine crash can leave a `.dedup-source-*` or `.dedup-copy-*` recovery folder.
+These folder prefixes are reserved: a later run stops and reports the recovery
+path. Inspect and restore its files before retrying; do not delete recovery folders
+without checking their contents. Give the container enough stop time for filesystem
+I/O to return; no process can clean up after `SIGKILL`.
 
 ## Check and build the container
 
@@ -112,7 +125,9 @@ on every branch push, pull request, and manual dispatch. It checks the Go code o
 Linux and Windows, validates the workflow and shell scripts, verifies that build
 helper failures are reported, builds the `linux/amd64` container,
 and tests all three modes, dry-run behavior, shared filters, and collisions
-against disposable sample files.
+against disposable sample files as root and a normal user. Linux checks also
+exercise real mount points, bind aliases, cross-filesystem ownership, inherited
+ACLs, read-only volumes, and graceful signal handling.
 
 After the checks pass, pushes and manual runs publish the tested image to
 `meinya/dedup:<7-character-commit>`. The current default-branch commit also

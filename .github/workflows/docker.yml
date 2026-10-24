@@ -29,6 +29,10 @@ jobs:
         run: go test -race -count=1 ./...
       - name: Vet
         run: go vet ./...
+      - name: Test Linux mounts and cross-filesystem moves
+        run: |
+          go test -c -o "$RUNNER_TEMP/app-linux.test" ./internal/app
+          sudo unshare --mount --propagation private env DEDUP_MOUNT_TESTS=1 "$RUNNER_TEMP/app-linux.test" -test.v -test.run '^TestLinuxIntegration'
       - name: Build command
         run: go build -o "$RUNNER_TEMP/dedup" ./cmd/dedup
       - name: Validate workflow and shell scripts

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -15,6 +16,7 @@ import (
 type fileRecord struct {
 	path string
 	info os.FileInfo
+	ctx  context.Context
 }
 
 type node struct {
@@ -42,7 +44,11 @@ type plan struct {
 	operations     []operation
 	dirs           map[string]os.FileInfo
 	protectContent bool
+	directoryIDs   map[directoryID]string
+	ctx            context.Context
 }
+
+type directoryID struct{ device, inode uint64 }
 
 func pathKey(path string) string {
 	return filepath.Clean(path)
@@ -61,14 +67,27 @@ func collisionKey(path string) string {
 
 // Run loads the environment, plans the selected mode, and applies or previews it.
 func Run() error {
+	return RunContext(context.Background())
+}
+
+// RunContext stops at safe operation boundaries and unwinds any staged files
+// when cancellation interrupts a long read or cross-filesystem copy.
+func RunContext(ctx context.Context) error {
 	config, err := loadConfig()
 	if err != nil {
 		return err
 	}
-	return run(config, os.Stderr)
+	return runContext(ctx, config, os.Stderr)
 }
 
 func run(config Config, output io.Writer) error {
+	return runContext(context.Background(), config, output)
+}
+
+func runContext(ctx context.Context, config Config, output io.Writer) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	config, err := config.normalized()
 	if err != nil {
 		return err
@@ -77,7 +96,7 @@ func run(config Config, output io.Writer) error {
 	logger.SetOutput(output)
 	level, _ := log.ParseLevel(config.Log)
 	logger.SetLevel(level)
-	planned, err := buildPlan(config, logger)
+	planned, err := buildPlanContext(ctx, config, logger)
 	if err != nil {
 		return err
 	}
@@ -87,12 +106,29 @@ func run(config Config, output io.Writer) error {
 func scanTree(root string, config Config, planned *plan) (*tree, error) {
 	result := &tree{root: root, nodes: make(map[string]*node), children: make(map[string]int), occupied: make(map[string]int)}
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if err := contextError(planned.ctx); err != nil {
+			return err
+		}
 		if walkErr != nil {
 			return fmt.Errorf("scan %q: %w", path, walkErr)
 		}
 		info, err := entry.Info()
 		if err != nil {
 			return fmt.Errorf("inspect %q: %w", path, err)
+		}
+		if info.IsDir() {
+			if strings.HasPrefix(entry.Name(), ".dedup-source-") || strings.HasPrefix(entry.Name(), ".dedup-copy-") {
+				return fmt.Errorf("unfinished file operation at %q; inspect and recover its files before retrying", path)
+			}
+			if identity, ok := directoryIdentity(info); ok {
+				if previous, exists := planned.directoryIDs[identity]; exists {
+					return fmt.Errorf("directory paths overlap through a mount or alias: %q and %q", previous, path)
+				}
+				if planned.directoryIDs == nil {
+					planned.directoryIDs = make(map[directoryID]string)
+				}
+				planned.directoryIDs[identity] = path
+			}
 		}
 		record := &fileRecord{path: path, info: info}
 		if !config.ignored(path) && (info.IsDir() || config.includes(path, info)) {
@@ -101,6 +137,7 @@ func scanTree(root string, config Config, planned *plan) (*tree, error) {
 				return err
 			}
 		}
+		record.ctx = planned.ctx
 		result.add(&node{path: path, file: record})
 		if info.IsDir() {
 			planned.dirs[pathKey(path)] = info
@@ -139,7 +176,11 @@ func (t *tree) sortedNodes() []*node {
 }
 
 func buildPlan(config Config, logger *log.Logger) (*plan, error) {
-	planned := &plan{dirs: make(map[string]os.FileInfo), protectContent: config.Mode == ModeDedup}
+	return buildPlanContext(context.Background(), config, logger)
+}
+
+func buildPlanContext(ctx context.Context, config Config, logger *log.Logger) (*plan, error) {
+	planned := &plan{dirs: make(map[string]os.FileInfo), protectContent: config.Mode == ModeDedup, ctx: ctx}
 	for _, root := range config.Roots {
 		logger.Infof("Planning mode=%s dry_run=%t root=%s", config.Mode, config.DryRun, root)
 		files, err := scanTree(root, config, planned)
@@ -218,6 +259,9 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 	// that an earlier planned move will relocate.
 	checked := make(map[*fileRecord]bool)
 	for _, op := range p.operations {
+		if err := contextError(p.ctx); err != nil {
+			return err
+		}
 		if err := p.verifyParents(op.root, op.from); err != nil {
 			return err
 		}
@@ -251,6 +295,9 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 	var deleted, moved, directories int
 	var bytesDeleted int64
 	for _, op := range p.operations {
+		if err := contextError(p.ctx); err != nil {
+			return err
+		}
 		if err := p.verifyParents(op.root, op.from); err != nil {
 			return err
 		}
@@ -293,8 +340,7 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 				if err := file.verify(); err != nil {
 					return err
 				}
-				// Remove never recursively deletes a directory that acquired files.
-				if err := os.Remove(op.from); err != nil {
+				if err := removeEmptyDirectory(file); err != nil {
 					return fmt.Errorf("remove empty directory %q: %w", op.from, err)
 				}
 			}

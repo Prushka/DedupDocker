@@ -44,6 +44,13 @@ func (t *tree) planEmptyDirs(config Config, planned *plan, removeMetadata, keepC
 			continue
 		}
 		if t.children[pathKey(directory.path)] == 0 {
+			mounted, err := directoryIsMountPoint(directory.path)
+			if err != nil {
+				return err
+			}
+			if mounted {
+				continue // Keep the mount and all directories needed to reach it.
+			}
 			planned.operations = append(planned.operations, operation{
 				kind: "rmdir", root: t.root, from: directory.path, file: directory.file,
 			})

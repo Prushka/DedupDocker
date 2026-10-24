@@ -28,4 +28,4 @@ COPY --from=build /app/main ./
 ENV COMMIT_SHA=${COMMIT_SHA}
 ENV COMMIT_MESSAGE=${COMMIT_MESSAGE}
 ENV COMMIT_TIME=${COMMIT_TIME}
-CMD [ "./main" ]
+CMD [ "/app/main" ]

@@ -20,7 +20,7 @@ func newFileRecord(path string, info os.FileInfo) (*fileRecord, error) {
 }
 
 func sameVersion(expected, actual os.FileInfo) bool {
-	if !os.SameFile(expected, actual) || expected.Mode() != actual.Mode() {
+	if !os.SameFile(expected, actual) || expected.Mode() != actual.Mode() || !sameOwnership(expected, actual) {
 		return false
 	}
 	// Directory timestamps and sizes change as this plan edits their children.
@@ -64,7 +64,7 @@ func hashFile(file *fileRecord) (digest string, resultErr error) {
 	}
 	defer func() { resultErr = errors.Join(resultErr, handle.Close()) }()
 	hash := sha256.New()
-	if _, err := io.Copy(hash, handle); err != nil {
+	if _, err := io.Copy(hash, cancelReader{ctx: file.ctx, reader: handle}); err != nil {
 		return "", fmt.Errorf("hash %q: %w", file.path, err)
 	}
 	if err := file.verify(); err != nil {
@@ -85,9 +85,10 @@ func sameContents(first, second *fileRecord) (equal bool, resultErr error) {
 	}
 	defer func() { resultErr = errors.Join(resultErr, b.Close()) }()
 	left, right := make([]byte, 64*1024), make([]byte, 64*1024)
+	aReader, bReader := cancelReader{ctx: first.ctx, reader: a}, cancelReader{ctx: second.ctx, reader: b}
 	for {
-		n, aErr := io.ReadFull(a, left)
-		m, bErr := io.ReadFull(b, right)
+		n, aErr := io.ReadFull(aReader, left)
+		m, bErr := io.ReadFull(bReader, right)
 		if aErr != nil && aErr != io.EOF && aErr != io.ErrUnexpectedEOF {
 			return false, fmt.Errorf("read %q: %w", first.path, aErr)
 		}
@@ -181,21 +182,21 @@ func copyMove(source *fileRecord, destination string) (result *fileRecord, resul
 		}
 	}()
 	hash := sha256.New()
-	written, err := io.Copy(io.MultiWriter(output, hash), input)
+	written, err := io.Copy(io.MultiWriter(output, hash), cancelReader{ctx: source.ctx, reader: input})
 	if err != nil {
 		return nil, fmt.Errorf("copy %q: %w", source.path, err)
 	}
 	if written != source.info.Size() {
 		return nil, fmt.Errorf("source size changed while copying %q", source.path)
 	}
-	if err := errors.Join(captured.record().verify(), output.Chmod(source.info.Mode()), setFileTimes(output, source.info.ModTime()), output.Sync()); err != nil {
+	if err := errors.Join(captured.record().verify(), preserveCopyMetadata(output, source.info), setFileTimes(output, source.info.ModTime()), output.Sync()); err != nil {
 		return nil, fmt.Errorf("verify copied file %q: %w", destination, err)
 	}
 	info, err := output.Stat()
 	if err != nil {
 		return nil, err
 	}
-	temporary := &fileRecord{path: temporaryPath, info: info}
+	temporary := &fileRecord{path: temporaryPath, info: info, ctx: source.ctx}
 	closed = true
 	if err := output.Close(); err != nil {
 		return nil, fmt.Errorf("close copied file %q: %w", destination, err)
@@ -222,6 +223,14 @@ func copyMove(source *fileRecord, destination string) (result *fileRecord, resul
 		return nil, err
 	}
 	published = true
+	// Persist the published directory entry before removing the source on the
+	// other filesystem. Syncing file data alone does not persist its new name.
+	if err := syncParentDirectory(destination); err != nil {
+		return nil, fmt.Errorf("persist copied destination %q: %w", destination, err)
+	}
+	if err := contextError(source.ctx); err != nil {
+		return nil, err
+	}
 	// Keep the verified destination if deleting the captured source fails. It
 	// may be the only surviving copy after an external source change.
 	if err := captured.remove(); err != nil {

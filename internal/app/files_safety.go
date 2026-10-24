@@ -28,6 +28,9 @@ func validateCaptured(expected *fileRecord, actual os.FileInfo, identityOnly boo
 // dedupContentSupported rejects file data or metadata which byte comparisons of
 // the default stream cannot represent. Native moves can still preserve it.
 func dedupContentSupported(file *fileRecord) (supported bool, resultErr error) {
+	if err := contextError(file.ctx); err != nil {
+		return false, err
+	}
 	handle, err := file.open()
 	if err != nil {
 		return false, err
