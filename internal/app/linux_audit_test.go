@@ -110,6 +110,21 @@ func TestLinuxIntegrationEmptyMountsRemain(t *testing.T) {
 	}
 }
 
+func TestLinuxIntegrationDedupAcrossMountRetainsCopy(t *testing.T) {
+	requireLinuxMountTests(t)
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{"file.txt": "retained across filesystems"}, "child/mounted")
+	mounted := filepath.Join(root, "child", "mounted")
+	mountAuditFixture(t, "tmpfs", mounted, "tmpfs", 0)
+	writeFixture(t, mounted, map[string]string{"file.txt": "retained across filesystems"})
+	config := testConfig(root, ModeDedup)
+	config.EmptyDir = true
+	if err := run(config, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	assertLayout(t, root, map[string]string{"file.txt": "retained across filesystems"}, "child/mounted")
+}
+
 func TestLinuxIntegrationBindAliasesAbortBeforeEdits(t *testing.T) {
 	requireLinuxMountTests(t)
 	for _, cycle := range []bool{false, true} {
