@@ -74,6 +74,11 @@ func writeArchiveMember(root *os.Root, member archiveMember, input io.Reader) (r
 	if member.crc != "" && !strings.EqualFold(member.crc, fmt.Sprintf("%08X", checksum.Sum32())) {
 		return record, fmt.Errorf("archive entry order or checksum differs for %q", member.relative)
 	}
+	if !member.modified.IsZero() {
+		if err := setFileTimes(file, member.modified); err != nil {
+			return record, err
+		}
+	}
 	if err := errors.Join(file.Chmod(0644), file.Sync()); err != nil {
 		return record, err
 	}

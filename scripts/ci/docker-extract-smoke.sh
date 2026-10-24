@@ -24,6 +24,7 @@ for run_user in 0:0 "$(id -u):$(id -g)"; do
       mkdir inputs
       printf "archive payload\n" > inputs/file.txt
       printf "second payload\n" > inputs/second.txt
+      touch -t 202009131226.40 inputs/file.txt
       7z a -tzip UPPER.ZIP ./inputs/file.txt >/dev/null
       7z a -t7z -ms=on -mhe=on -pfixture-password encrypted.7z ./inputs >/dev/null
       7z a -ttar bundle.tar ./inputs >/dev/null
@@ -57,6 +58,7 @@ for run_user in 0:0 "$(id -u):$(id -g)"; do
     --user "$run_user" \
     --mount "type=bind,src=$data,dst=/dedup" \
     -e MODE=Extract -e ROOTS=/dedup -e TARGET=/ignored -e DRY_RUN=false \
+    -e TZ=Asia/Shanghai \
     -e PASSWORDS=wrong-password,fixture-password -e IGNORE_KEYWORDS=protected "$LOCAL_IMAGE" 2>&1)"
   printf '%s\n' "$logs"
   if grep -Eq 'fixture-password|wrong-password' <<< "$logs"; then
@@ -69,6 +71,9 @@ for run_user in 0:0 "$(id -u):$(id -g)"; do
   test "$(cat "$data/bundle/inputs/file.txt")" = 'archive payload'
   test "$(cat "$data/image/inputs/file.txt")" = 'archive payload'
   test "$(stat -c '%u:%g' "$data/UPPER (1)/file.txt")" = "$(id -u):$(id -g)"
+  for extracted in 'UPPER (1)/file.txt' encrypted/inputs/file.txt bundle/inputs/file.txt image/inputs/file.txt; do
+    test "$(stat -c '%Y' "$data/$extracted")" = 1600000000
+  done
   test -f "$data/protected.zip"
   for archive in UPPER.ZIP encrypted.7z bundle.tar.gz image.wim; do
     test ! -e "$data/$archive"

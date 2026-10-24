@@ -48,6 +48,9 @@ func unpackGzip(ctx context.Context, archive string, root *os.Root, fallback str
 		return nil, err
 	}
 	if !reader.ModTime.IsZero() {
+		if err := validateArchiveTimestamp(reader.ModTime); err != nil {
+			return nil, err
+		}
 		if err := setFileTimes(output, reader.ModTime); err != nil {
 			return nil, err
 		}
@@ -125,6 +128,9 @@ func unpackTar(ctx context.Context, archive string, root *os.Root) (files map[st
 			return nil, err
 		}
 		if !header.ModTime.IsZero() {
+			if err := validateArchiveTimestamp(header.ModTime); err != nil {
+				return nil, err
+			}
 			if err := root.Chtimes(relative, header.ModTime, header.ModTime); err != nil {
 				return nil, err
 			}

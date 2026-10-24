@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -27,6 +28,7 @@ type archiveMember struct {
 	size      int64
 	directory bool
 	crc       string
+	modified  time.Time
 }
 
 func findArchiveTool() (archiveTool, error) {
@@ -74,6 +76,11 @@ func (tool archiveTool) command(ctx context.Context, command, archive, password 
 	args = append(args, extra...)
 	args = append(args, "--", archive)
 	cmd := exec.CommandContext(ctx, tool.executable, args...)
+	if runtime.GOOS != "windows" {
+		// Technical listings omit a timezone. Use UTC in the child so dates
+		// survive local timezone and daylight-saving transitions unchanged.
+		cmd.Env = append(os.Environ(), "TZ=UTC")
+	}
 	cmd.Stdin = strings.NewReader("") // EOF prevents interactive password prompts.
 	cmd.Stderr = io.Discard           // Tool diagnostics can contain password or hostile filename text.
 	return cmd
@@ -203,7 +210,18 @@ func parseArchiveListing(listing string) ([]archiveMember, error) {
 				return nil, fmt.Errorf("invalid archive entry size: %q", relative)
 			}
 		}
-		members = append(members, archiveMember{name: name, relative: relative, size: size, directory: directory, crc: fields["CRC"]})
+		var modified time.Time
+		if value := fields["Modified"]; value != "" {
+			zone := time.UTC
+			if runtime.GOOS == "windows" {
+				zone = time.Local // Windows 7-Zip uses the system timezone.
+			}
+			modified, err = parseArchiveModified(value, zone, runtime.GOOS == "windows")
+			if err != nil {
+				return nil, fmt.Errorf("archive modification date cannot be preserved: %q", relative)
+			}
+		}
+		members = append(members, archiveMember{name: name, relative: relative, size: size, directory: directory, crc: fields["CRC"], modified: modified})
 	}
 	kinds := make(map[string]bool)
 	for _, member := range members {
@@ -225,6 +243,36 @@ func parseArchiveListing(listing string) ([]archiveMember, error) {
 		}
 	}
 	return members, nil
+}
+
+func validateArchiveTimestamp(stamp time.Time) error {
+	if !time.Unix(0, stamp.UnixNano()).Equal(stamp) {
+		return fmt.Errorf("archive timestamp is outside the supported nanosecond range")
+	}
+	return nil
+}
+
+func parseArchiveModified(value string, zone *time.Location, local bool) (time.Time, error) {
+	const layout = "2006-01-02 15:04:05.999999999"
+	stamp, err := time.ParseInLocation(layout, value, zone)
+	if err != nil {
+		return time.Time{}, err
+	}
+	wall, err := time.Parse(layout, value)
+	if err != nil || stamp.Format(layout) != wall.Format(layout) {
+		return time.Time{}, fmt.Errorf("archive timestamp does not exist in the system timezone")
+	}
+	if err := validateArchiveTimestamp(stamp); err != nil {
+		return time.Time{}, err
+	}
+	if local {
+		for _, shift := range []time.Duration{-2 * time.Hour, -time.Hour, -30 * time.Minute, 30 * time.Minute, time.Hour, 2 * time.Hour} {
+			if stamp.Add(shift).Format(layout) == stamp.Format(layout) {
+				return time.Time{}, fmt.Errorf("archive timestamp is ambiguous in the system timezone")
+			}
+		}
+	}
+	return stamp, nil
 }
 
 func safeArchivePath(name string) (string, error) {

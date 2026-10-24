@@ -105,7 +105,9 @@ can exclude either `.gz` or `.tar.gz` for a tar/gzip input.
 
 Extraction uses a private snapshot, requires warning-free archive validation,
 verifies the written files, publishes the output without overwriting, and only
-then removes the verified original archive. Wrong passwords, corrupt data,
+then removes the verified original archive. File modification dates are preserved
+when recorded; unrepresentable or ambiguous timestamps retain the original.
+Wrong passwords, corrupt data,
 unsafe paths, ambiguous names, links, special files, duplicate member paths,
 and unsupported extra attributes or archived security descriptors produce an
 error with the original retained.

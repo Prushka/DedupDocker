@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMain(m *testing.M) {
@@ -37,12 +38,32 @@ func TestExtractWarningsNeverAuthorizeDeletion(t *testing.T) {
 	}
 }
 
+func TestArchiveTimestampTransitions(t *testing.T) {
+	zone, err := time.LoadLocation("America/Chicago")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"2020-03-08 02:30:00", "2020-11-01 01:30:00", "1601-01-01 00:00:00"} {
+		if _, err := parseArchiveModified(value, zone, true); err == nil {
+			t.Fatalf("accepted an ambiguous or unrepresentable timestamp: %s", value)
+		}
+	}
+	stamp, err := parseArchiveModified("2020-09-13 07:26:40", zone, true)
+	if err != nil || !stamp.Equal(time.Unix(1600000000, 0)) {
+		t.Fatalf("normal timestamp changed: %v, %v", stamp, err)
+	}
+}
+
 func TestExtractFormats(t *testing.T) {
 	tool := requireArchiveTool(t)
 	for _, format := range []string{"zip", "7z", "tar", "wim", "gzip"} {
 		t.Run(format, func(t *testing.T) {
 			root, inputs := t.TempDir(), t.TempDir()
 			writeFixture(t, inputs, map[string]string{"payload.txt": "format payload"})
+			stamp := time.Unix(1600000000, 0)
+			if err := os.Chtimes(filepath.Join(inputs, "payload.txt"), stamp, stamp); err != nil {
+				t.Fatal(err)
+			}
 			extension := format
 			if format == "gzip" {
 				extension = "gz"
@@ -57,6 +78,10 @@ func TestExtractFormats(t *testing.T) {
 				t.Fatal(err)
 			}
 			assertLayout(t, root, map[string]string{"bundle/payload.txt": "format payload"})
+			info, err := os.Stat(filepath.Join(root, "bundle", "payload.txt"))
+			if err != nil || !info.ModTime().Equal(stamp) {
+				t.Fatalf("extraction reset the archived modification date: %v, %v", info, err)
+			}
 		})
 	}
 }
