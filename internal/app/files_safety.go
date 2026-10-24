@@ -79,6 +79,14 @@ func removeDuplicateVerified(source, keeper *fileRecord) (resultErr error) {
 	if !equal {
 		return fmt.Errorf("duplicate content changed: %q and %q", source.path, keeper.path)
 	}
+	// The retained file may be on another mount. Persist its staged name before
+	// unlinking a source whose filesystem could commit independently.
+	if err := captured.sync(); err != nil {
+		return err
+	}
+	if err := captured.record().verify(); err != nil {
+		return err
+	}
 	return removeVerifiedContent(source)
 }
 
