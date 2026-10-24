@@ -18,7 +18,7 @@ scripts/ci/       Container smoke test
 
 ## Build and run
 
-From the repository root:
+Requires Go 1.27.3 or later. From the repository root:
 
 ```sh
 go build -o dedup ./cmd/dedup

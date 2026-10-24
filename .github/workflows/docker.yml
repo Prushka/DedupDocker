@@ -32,8 +32,6 @@ jobs:
       - name: Build command
         run: go build -o "$RUNNER_TEMP/dedup" ./cmd/dedup
       - name: Validate workflow and shell scripts
-        env:
-          GOTOOLCHAIN: auto
         run: |
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
           shellcheck build.sh scripts/ci/docker-smoke.sh scripts/ci/build-script-test.sh

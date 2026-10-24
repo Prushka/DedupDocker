@@ -11,8 +11,8 @@ import (
 )
 
 func newFileRecord(path string, info os.FileInfo) (*fileRecord, error) {
-	// Go 1.22 on Windows resolves file IDs lazily. Capture the ID now, before
-	// any move or replacement can change what the original path refers to.
+	// Capture the identity before a later move or replacement changes what
+	// the original path refers to.
 	if !os.SameFile(info, info) {
 		return nil, fmt.Errorf("cannot capture file identity: %q", path)
 	}

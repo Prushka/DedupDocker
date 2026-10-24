@@ -108,7 +108,7 @@ func (c Config) normalized() (Config, error) {
 		if !os.SameFile(info, info) {
 			return Config{}, fmt.Errorf("cannot capture root identity: %q", absolute)
 		}
-		physical, err := filepath.EvalSymlinks(absolute)
+		physical, err := physicalRootPath(absolute)
 		if err != nil {
 			return Config{}, fmt.Errorf("resolve root ancestors %q: %w", absolute, err)
 		}
