@@ -102,6 +102,30 @@ func TestExtractRAR(t *testing.T) {
 	assertLayout(t, root, map[string]string{"bundle/payload.txt": "RAR payload"})
 }
 
+func TestExtractDoesNotGuessAnUnconfiguredPassword(t *testing.T) {
+	tool := requireArchiveTool(t)
+	root, input := t.TempDir(), t.TempDir()
+	writeFixture(t, input, map[string]string{"payload.txt": "encrypted payload"})
+	archive := filepath.Join(root, "protected.7z")
+	command := exec.Command(tool.executable, "a", "-t7z", "-mhe=on", "-p-", archive, "payload.txt")
+	command.Dir = input
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("create password fixture: %v\n%s", err, output)
+	}
+	if err := run(testConfig(root, ModeExtract), io.Discard); err == nil {
+		t.Fatal("guessed a password that was not configured")
+	}
+	if _, err := os.Stat(archive); err != nil {
+		t.Fatal("removed archive without a configured password")
+	}
+	config := testConfig(root, ModeExtract)
+	config.Passwords = []string{"-"}
+	if err := run(config, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	assertLayout(t, root, map[string]string{"protected/payload.txt": "encrypted payload"})
+}
+
 func TestExtractListingRejectsConflictsAndLinks(t *testing.T) {
 	for _, listing := range []string{
 		"Path = a\nFolder = -\nSize = 1\n\nPath = a\nFolder = -\nSize = 1\n",

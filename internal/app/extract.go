@@ -109,8 +109,7 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 	}
 	stageRoot, err := os.OpenRoot(stage)
 	if err != nil {
-		_ = os.Remove(stage)
-		return err
+		return errors.Join(err, removeEmptyDirectory(&fileRecord{path: stage, info: stageInfo}))
 	}
 	defer func() {
 		// Remove only children through the held root, then remove its verified

@@ -191,6 +191,29 @@ func (file *windowsCapturedFile) record() *fileRecord { return file.captured }
 // name in place, so it needs no additional staging-directory synchronization.
 func (file *windowsCapturedFile) sync() error { return nil }
 
+func removeEmptyDirectory(expected *fileRecord) (resultErr error) {
+	directory, err := openWindowsHandle(expected.path, windows.DELETE|windows.FILE_READ_ATTRIBUTES|windows.SYNCHRONIZE,
+		windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, directory.Close()) }()
+	actual, err := directory.Stat()
+	if err != nil || !actual.IsDir() || !os.SameFile(expected.info, actual) {
+		return errors.Join(err, fmt.Errorf("empty directory changed: %q", expected.path))
+	}
+	// Delete the verified directory through its held handle. A substituted
+	// regular file is never eligible, and a nonempty directory cannot be removed.
+	flags := uint32(windows.FILE_DISPOSITION_DELETE | windows.FILE_DISPOSITION_POSIX_SEMANTICS | windows.FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE)
+	err = windows.SetFileInformationByHandle(windows.Handle(directory.Fd()), windows.FileDispositionInfoEx,
+		(*byte)(unsafe.Pointer(&flags)), uint32(unsafe.Sizeof(flags)))
+	if errors.Is(err, windows.ERROR_INVALID_PARAMETER) || errors.Is(err, windows.ERROR_NOT_SUPPORTED) || errors.Is(err, windows.ERROR_INVALID_FUNCTION) {
+		deleteDirectory := byte(1)
+		return windows.SetFileInformationByHandle(windows.Handle(directory.Fd()), windows.FileDispositionInfo, &deleteDirectory, 1)
+	}
+	return err
+}
+
 func (file *windowsCapturedFile) remove() error {
 	actual, err := file.fd.Stat()
 	if err != nil {

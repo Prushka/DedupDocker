@@ -64,20 +64,18 @@ func (buffer *limitedArchiveBuffer) Write(data []byte) (int, error) {
 }
 
 func (tool archiveTool) command(ctx context.Context, command, archive, password string, extra ...string) *exec.Cmd {
-	// An explicit password prevents interactive prompting, including the first
-	// attempt. A literal '-' also works as a password; it is never logged.
-	if password == "" {
-		password = "-"
+	args := []string{command, "-y", "-bd", "-bb0", "-sccUTF-8", "-ssc", "-spd", "-r-"}
+	if password != "" {
+		args = append(args, "-p"+password)
 	}
-	args := []string{command, "-y", "-bd", "-bb0", "-sccUTF-8", "-ssc", "-spd", "-r-", "-p" + password}
 	if tool.format != "" {
 		args = append(args, "-t"+tool.format)
 	}
 	args = append(args, extra...)
 	args = append(args, "--", archive)
 	cmd := exec.CommandContext(ctx, tool.executable, args...)
-	cmd.Stdin = strings.NewReader("")
-	cmd.Stderr = io.Discard // Tool diagnostics can contain password or hostile filename text.
+	cmd.Stdin = strings.NewReader("") // EOF prevents interactive password prompts.
+	cmd.Stderr = io.Discard           // Tool diagnostics can contain password or hostile filename text.
 	return cmd
 }
 
@@ -112,7 +110,7 @@ func (tool archiveTool) password(ctx context.Context, archive string, passwords 
 			return password, nil
 		}
 		var exit *exec.ExitError
-		if !errors.As(err, &exit) || exit.ExitCode() != 2 {
+		if !errors.As(err, &exit) || (exit.ExitCode() != 2 && !(password == "" && exit.ExitCode() == 255 && ctx.Err() == nil)) {
 			// Warnings, invocation failures, cancellation and all other exit
 			// codes must never authorize archive deletion or password retries.
 			return "", archiveCommandError(ctx, "test", err)

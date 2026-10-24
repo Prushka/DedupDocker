@@ -22,6 +22,10 @@ func setFileTimes(file *os.File, stamp time.Time) error {
 
 func crossDeviceError(err error) bool { return false }
 
+func removeEmptyDirectory(file *fileRecord) error {
+	return fmt.Errorf("safe directory removal is unsupported on this platform: %q", file.path)
+}
+
 func captureFile(file *fileRecord, identityOnly, read bool) (capturedFile, error) {
 	return nil, fmt.Errorf("safe file operations are unsupported on this platform: %q", file.path)
 }

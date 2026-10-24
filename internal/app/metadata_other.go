@@ -11,5 +11,3 @@ func sameOwnership(os.FileInfo, os.FileInfo) bool       { return true }
 func preserveCopyMetadata(file *os.File, source os.FileInfo) error {
 	return file.Chmod(source.Mode())
 }
-
-func removeEmptyDirectory(file *fileRecord) error { return os.Remove(file.path) }

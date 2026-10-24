@@ -87,3 +87,12 @@ func TestSafetyCopiedSourceSurvivesChangedDestination(t *testing.T) {
 	}
 	assertLayout(t, root, map[string]string{"source": "same", "destination": "DIFF"})
 }
+
+func TestSafetyDirectoryRemovalCannotDeleteARegularFile(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{"keep": "unrelated file"})
+	if err := removeEmptyDirectory(recordFile(t, filepath.Join(root, "keep"))); err == nil {
+		t.Fatal("directory removal accepted a regular file")
+	}
+	assertLayout(t, root, map[string]string{"keep": "unrelated file"})
+}

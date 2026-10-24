@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags "-s -w
 FROM --platform=$BUILDPLATFORM alpine:latest AS archive-tools
 
 ARG TARGETARCH
-RUN apk --no-cache add curl xz
+RUN apk --no-cache add curl xz tar
 COPY scripts/install-7zip.sh /install-7zip.sh
 RUN sh /install-7zip.sh "$TARGETARCH" /out
 
