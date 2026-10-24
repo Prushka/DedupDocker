@@ -92,6 +92,7 @@ func (c Config) normalized() (Config, error) {
 		return Config{}, fmt.Errorf("ROOT must contain at least one directory")
 	}
 	// Reject missing, symbolic-link and overlapping roots before planning edits.
+	var rootAncestors [][]os.FileInfo
 	for i, root := range c.Roots {
 		absolute, err := filepath.Abs(root)
 		if err != nil {
@@ -104,14 +105,60 @@ func (c Config) normalized() (Config, error) {
 		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 			return Config{}, fmt.Errorf("root %q must be a directory, not a symbolic link", absolute)
 		}
+		if !os.SameFile(info, info) {
+			return Config{}, fmt.Errorf("cannot capture root identity: %q", absolute)
+		}
+		physical, err := filepath.EvalSymlinks(absolute)
+		if err != nil {
+			return Config{}, fmt.Errorf("resolve root ancestors %q: %w", absolute, err)
+		}
+		ancestors, err := inspectRootAncestors(physical)
+		if err != nil {
+			return Config{}, err
+		}
+		if !os.SameFile(info, ancestors[0]) {
+			return Config{}, fmt.Errorf("root changed while resolving ancestors: %q", absolute)
+		}
+		// Keep the configured path for full-path keyword filters, but compare
+		// ancestor identities so aliases cannot overlap unnoticed, and distinct
+		// case-sensitive directories are not confused by lexical path folding.
 		c.Roots[i] = absolute
-		for _, previous := range c.Roots[:i] {
-			if within(previous, absolute) || within(absolute, previous) {
-				return Config{}, fmt.Errorf("ROOT directories overlap: %q and %q", previous, absolute)
+		for j, previous := range rootAncestors {
+			if hasDirectoryIdentity(ancestors, previous[0]) || hasDirectoryIdentity(previous, info) {
+				return Config{}, fmt.Errorf("ROOT directories overlap: %q and %q", c.Roots[j], absolute)
 			}
 		}
+		rootAncestors = append(rootAncestors, ancestors)
 	}
 	return c, nil
+}
+
+func inspectRootAncestors(path string) ([]os.FileInfo, error) {
+	var ancestors []os.FileInfo
+	for {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return nil, fmt.Errorf("inspect root ancestor %q: %w", path, err)
+		}
+		if !info.IsDir() || !os.SameFile(info, info) {
+			return nil, fmt.Errorf("cannot capture root ancestor identity: %q", path)
+		}
+		ancestors = append(ancestors, info)
+		parent := filepath.Dir(path)
+		if parent == path {
+			return ancestors, nil
+		}
+		path = parent
+	}
+}
+
+func hasDirectoryIdentity(ancestors []os.FileInfo, directory os.FileInfo) bool {
+	for _, ancestor := range ancestors {
+		if os.SameFile(ancestor, directory) {
+			return true
+		}
+	}
+	return false
 }
 
 func within(root, path string) bool {

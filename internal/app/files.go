@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 func newFileRecord(path string, info os.FileInfo) (*fileRecord, error) {
@@ -27,7 +28,7 @@ func sameVersion(expected, actual os.FileInfo) bool {
 }
 
 func (file *fileRecord) verify() error {
-	actual, err := os.Lstat(file.path)
+	actual, err := inspectFile(file.path)
 	if err != nil {
 		return fmt.Errorf("inspect %q: %w", file.path, err)
 	}
@@ -44,7 +45,7 @@ func (file *fileRecord) open() (*os.File, error) {
 	if err := file.verify(); err != nil {
 		return nil, err
 	}
-	handle, err := os.Open(file.path)
+	handle, err := openRegular(file.path)
 	if err != nil {
 		return nil, fmt.Errorf("open %q: %w", file.path, err)
 	}
@@ -106,9 +107,8 @@ func sameContents(first, second *fileRecord) (equal bool, resultErr error) {
 	return true, nil
 }
 
-// moveNoReplace creates the destination exclusively, so even a destination
-// created after planning cannot be overwritten. Linking avoids copying large
-// files; exclusive, verified copying supports filesystems without hard links.
+// Native no-replace renames preserve all file streams and metadata. Copying is
+// only needed across filesystems, and refuses metadata it cannot preserve.
 func moveNoReplace(source *fileRecord, destination string) (*fileRecord, error) {
 	if err := source.verify(); err != nil {
 		return nil, err
@@ -116,58 +116,67 @@ func moveNoReplace(source *fileRecord, destination string) (*fileRecord, error) 
 	if !source.info.Mode().IsRegular() {
 		return nil, fmt.Errorf("cannot move nonregular file %q", source.path)
 	}
-	if err := os.Link(source.path, destination); err == nil {
-		linked := &fileRecord{path: destination, info: source.info}
-		if err := errors.Join(source.verify(), linked.verify()); err != nil {
-			return nil, errors.Join(err, removeCreated(linked))
-		}
-		if err := os.Remove(source.path); err != nil {
-			return nil, errors.Join(fmt.Errorf("unlink moved source %q: %w", source.path, err), removeCreated(linked))
-		}
-		return linked, nil
-	} else if os.IsExist(err) {
-		return nil, fmt.Errorf("destination already exists %q: %w", destination, err)
+	if _, err := os.Lstat(destination); err == nil {
+		return nil, fmt.Errorf("destination already exists: %q", destination)
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	result, err := nativeMoveNoReplace(source, destination)
+	if err == nil || !crossDeviceError(err) {
+		return result, err
 	}
 	return copyMove(source, destination)
 }
 
-func removeCreated(file *fileRecord) error {
-	actual, err := os.Lstat(file.path)
-	if err != nil {
-		return err
-	}
-	if !os.SameFile(file.info, actual) {
-		return fmt.Errorf("cannot clean up replaced destination %q", file.path)
-	}
-	return os.Remove(file.path)
-}
-
 func copyMove(source *fileRecord, destination string) (result *fileRecord, resultErr error) {
-	input, err := source.open()
+	// Reject known collisions and unsupported source metadata before detaching
+	// the source or creating temporary files.
+	if _, err := os.Lstat(destination); err == nil {
+		return nil, fmt.Errorf("destination already exists: %q", destination)
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	supported, err := dedupContentSupported(source)
 	if err != nil {
 		return nil, err
 	}
-	defer func() {
-		if input != nil {
-			resultErr = errors.Join(resultErr, input.Close())
-		}
-	}()
-	output, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, source.info.Mode().Perm())
+	if !supported {
+		return nil, fmt.Errorf("additional file content or metadata prevents copying: %q", source.path)
+	}
+	captured, err := captureFile(source, false, true)
 	if err != nil {
-		return nil, fmt.Errorf("create move destination %q: %w", destination, err)
+		return nil, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, captured.close()) }()
+	input := captured.handle()
+	if supported, err := contentSupportedHandle(input); err != nil || !supported {
+		return nil, errors.Join(err, fmt.Errorf("additional file content or metadata prevents copying: %q", source.path))
+	}
+	// Publish only a completely written, verified file. A consumer cannot see
+	// and modify an incomplete destination while the copy is in progress.
+	temporaryDir, err := os.MkdirTemp(filepath.Dir(destination), ".dedup-copy-")
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, os.Remove(temporaryDir)) }()
+	temporaryPath := filepath.Join(temporaryDir, "file")
+	output, err := os.OpenFile(temporaryPath, os.O_RDWR|os.O_CREATE|os.O_EXCL, source.info.Mode().Perm())
+	if err != nil {
+		return nil, fmt.Errorf("create move copy: %w", err)
 	}
 	createdInfo, err := output.Stat()
 	if err != nil {
 		_ = output.Close()
-		return nil, fmt.Errorf("inspect created destination %q: %w", destination, err)
+		return nil, fmt.Errorf("inspect created copy: %w", err)
 	}
-	created := &fileRecord{path: destination, info: createdInfo}
+	created := &fileRecord{path: temporaryPath, info: createdInfo}
 	closed := false
+	published := false
 	defer func() {
 		if !closed {
 			resultErr = errors.Join(resultErr, output.Close())
 		}
-		if resultErr != nil {
+		if !published {
 			resultErr = errors.Join(resultErr, removeCreated(created))
 		}
 	}()
@@ -179,46 +188,43 @@ func copyMove(source *fileRecord, destination string) (result *fileRecord, resul
 	if written != source.info.Size() {
 		return nil, fmt.Errorf("source size changed while copying %q", source.path)
 	}
-	if err := errors.Join(source.verify(), output.Chmod(source.info.Mode().Perm()), output.Sync()); err != nil {
+	if err := errors.Join(captured.record().verify(), output.Chmod(source.info.Mode()), setFileTimes(output, source.info.ModTime()), output.Sync()); err != nil {
 		return nil, fmt.Errorf("verify copied file %q: %w", destination, err)
 	}
+	info, err := output.Stat()
+	if err != nil {
+		return nil, err
+	}
+	temporary := &fileRecord{path: temporaryPath, info: info}
 	closed = true
 	if err := output.Close(); err != nil {
 		return nil, fmt.Errorf("close copied file %q: %w", destination, err)
 	}
-	if err := os.Chtimes(destination, source.info.ModTime(), source.info.ModTime()); err != nil {
-		return nil, fmt.Errorf("preserve modification time %q: %w", destination, err)
-	}
-	info, err := os.Lstat(destination)
-	if err != nil {
-		return nil, err
-	}
-	if !os.SameFile(createdInfo, info) {
-		return nil, fmt.Errorf("destination changed while copying %q", destination)
-	}
-	result = &fileRecord{path: destination, info: info}
-	digest, err := hashFile(result)
+	digest, err := hashFile(temporary)
 	if err != nil {
 		return nil, err
 	}
 	if digest != fmt.Sprintf("%x", hash.Sum(nil)) {
 		return nil, fmt.Errorf("copied content differs: %q", destination)
 	}
-	equal, err := sameContents(source, result)
+	equal, err := sameContents(captured.record(), temporary)
 	if err != nil {
 		return nil, err
 	}
 	if !equal {
 		return nil, fmt.Errorf("source contents changed while copying %q", source.path)
 	}
-	if err := input.Close(); err != nil {
+	if supported, err := contentSupportedHandle(input); err != nil || !supported {
+		return nil, errors.Join(err, fmt.Errorf("additional file content or metadata prevents copying: %q", source.path))
+	}
+	result, err = nativeMoveNoReplace(temporary, destination)
+	if err != nil {
 		return nil, err
 	}
-	input = nil
-	if err := source.verify(); err != nil {
-		return nil, err
-	}
-	if err := os.Remove(source.path); err != nil {
+	published = true
+	// Keep the verified destination if deleting the captured source fails. It
+	// may be the only surviving copy after an external source change.
+	if err := captured.remove(); err != nil {
 		return nil, fmt.Errorf("remove copied source %q: %w", source.path, err)
 	}
 	return result, nil

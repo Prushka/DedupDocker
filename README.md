@@ -40,7 +40,7 @@ Configuration uses environment variables. `ROOT` defaults to `/dedup`, and
 | Variable | Default | Behavior |
 | --- | --- | --- |
 | `MODE` | `dedup` | `dedup`, `delete-files-including`, or `flatten` |
-| `ROOT` | `/dedup` | Comma-separated directories, processed independently; overlapping roots are rejected |
+| `ROOT` | `/dedup` | Comma-separated directories, processed independently; physically overlapping roots, including ancestor aliases, are rejected |
 | `DRY_RUN` | `true` | Preview operations; set `false` to apply changes |
 | `EMPTY_DIR` | `false` | In dedup mode, also remove empty directories |
 | `DELETE_FILES_INCLUDING` | empty | Comma-separated, case-sensitive filename substrings for delete-files-including mode |
@@ -59,7 +59,12 @@ using the longest duplicate filename where available. Ties are resolved
 lexically. An unrelated existing destination is preserved and the retained
 copy keeps its original name. With `EMPTY_DIR=true`, it also removes empty
 directories and eligible `.DS_Store` files; excluded files keep their folders.
-It does not run filename-matching deletion.
+Metadata and ordinary files are deduplicated separately, so `.DS_Store` can
+never become an ordinary file's surviving name. It does not run filename-matching
+deletion. Files with additional NTFS streams or Linux extended attributes are
+preserved during dedup and metadata cleanup rather than losing their extra data.
+Names that are already hardlinks to the retained file are preserved because
+they already share its storage.
 
 `MODE=delete-files-including` only deletes eligible files whose filenames
 contain an entry from `DELETE_FILES_INCLUDING`. An empty list does nothing.
@@ -73,6 +78,10 @@ the suffix as needed. Identical files are preserved too. Newly empty nested
 directories are removed regardless of `EMPTY_DIR`, while `ROOT` and its direct
 children stay. Excluded files remain at their original paths, so their parent
 folders remain when necessary. `.DS_Store` is an ordinary file in this mode.
+Long collision names are shortened without splitting UTF-8 characters to keep
+the numbered filename within a 255-byte component limit. Extensions are kept
+intact when they fit. Windows destination names are reserved without regard to
+case; distinct source files in case-sensitive directories are all processed.
 
 For example, flatten turns `ROOT/album/disc1/photo.jpg` into
 `ROOT/album/photo.jpg`, keeping `album` separate from other child folders.
@@ -81,8 +90,12 @@ Moves never overwrite an existing path. The app skips symbolic links, checks
 source identities and modification times, and rechecks duplicate contents
 before deletion. A detected change or I/O failure stops processing and returns
 a nonzero exit status. Earlier completed edits remain; operations are not a
-transaction. Copy-based moves preserve file permissions and modification time
-and verify the copied contents before removing the source.
+transaction. Native moves preserve file attributes and additional streams.
+Copy-based moves preserve file permissions and modification time and verify the
+copied contents before removing the source. If a copy cannot preserve additional
+streams or extended attributes, it fails with the source intact.
+The guarded file operations support Linux and Windows. Other platforms return
+an unsupported-operation error instead of using unguarded destructive operations.
 
 ## Check and build the container
 
@@ -95,8 +108,9 @@ docker build -t dedup .
 ## GitHub Actions
 
 [CI/CD](https://github.com/Prushka/DedupDocker/actions/workflows/docker.yml) runs
-on every branch push, pull request, and manual dispatch. It checks the Go code,
-validates the workflow and shell script, builds the `linux/amd64` container,
+on every branch push, pull request, and manual dispatch. It checks the Go code on
+Linux and Windows, validates the workflow and shell scripts, verifies that build
+helper failures are reported, builds the `linux/amd64` container,
 and tests all three modes, dry-run behavior, shared filters, and collisions
 against disposable sample files.
 

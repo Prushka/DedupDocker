@@ -5,10 +5,22 @@ import (
 	"sort"
 )
 
-func (t *tree) planEmptyDirs(config Config, planned *plan, removeMetadata, keepChildren bool) {
+func isMetadataFile(path string) bool {
+	return filepath.Base(path) == ".DS_Store"
+}
+
+func (t *tree) planEmptyDirs(config Config, planned *plan, removeMetadata, keepChildren bool) error {
 	if removeMetadata {
 		for _, entry := range t.sortedNodes() {
-			if filepath.Base(entry.path) == ".DS_Store" && config.includes(entry.path, entry.file.info) {
+			// Classify the original path, never a name produced by this plan.
+			if !isMetadataFile(entry.file.path) || !config.includes(entry.path, entry.file.info) {
+				continue
+			}
+			supported, err := dedupContentSupported(entry.file)
+			if err != nil {
+				return err
+			}
+			if supported {
 				t.planDelete(planned, entry, nil)
 			}
 		}
@@ -38,4 +50,5 @@ func (t *tree) planEmptyDirs(config Config, planned *plan, removeMetadata, keepC
 			t.remove(directory.path)
 		}
 	}
+	return nil
 }

@@ -336,29 +336,54 @@ func TestMetadataCleanupRespectsFilters(t *testing.T) {
 	}
 }
 
-func TestDryRunPlansMetadataAfterRename(t *testing.T) {
+func TestMetadataCleanupPreservesOrdinaryDuplicate(t *testing.T) {
+	t.Parallel()
+	for _, priorRun := range []bool{false, true} {
+		t.Run(fmt.Sprintf("prior-cleanup-disabled=%t", priorRun), func(t *testing.T) {
+			root := t.TempDir()
+			files := map[string]string{"a/z": "same", "longer-directory/.DS_Store": "same"}
+			writeFixture(t, root, files)
+			config := testConfig(root, ModeDedup)
+			if priorRun {
+				if err := run(config, io.Discard); err != nil {
+					t.Fatal(err)
+				}
+				assertLayout(t, root, files)
+			}
+			config.EmptyDir, config.DryRun = true, true
+			before := snapshot(t, root)
+			if err := run(config, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(before, snapshot(t, root)) {
+				t.Fatal("metadata cleanup preview changed files")
+			}
+			config.DryRun = false
+			if err := run(config, io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			assertLayout(t, root, map[string]string{"a/z": "same"})
+		})
+	}
+}
+
+func TestMetadataAndOrdinaryDuplicatesUseSeparateKeepers(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	writeFixture(t, root, map[string]string{"a/z": "same", "longer-directory/.DS_Store": "same"})
+	writeFixture(t, root, map[string]string{
+		"a/x": "same", "longer/y": "same",
+		"meta/.DS_Store": "same", "longer-meta/.DS_Store": "same",
+	})
 	config := testConfig(root, ModeDedup)
+	if err := run(config, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	assertLayout(t, root, map[string]string{"a/x": "same", "meta/.DS_Store": "same"}, "longer", "longer-meta")
 	config.EmptyDir = true
-	planned, err := buildPlan(config, testLogger())
-	if err != nil {
+	if err := run(config, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	var removals int
-	for _, op := range planned.operations {
-		if op.kind == "rmdir" {
-			removals++
-		}
-	}
-	if removals != 2 {
-		t.Fatalf("expected both directories empty after virtual rename and metadata removal, got %d", removals)
-	}
-	if err := planned.execute(false, testLogger()); err != nil {
-		t.Fatal(err)
-	}
-	assertLayout(t, root, nil)
+	assertLayout(t, root, map[string]string{"a/x": "same"})
 }
 
 func TestDeleteWithoutSubstringsDoesNothing(t *testing.T) {

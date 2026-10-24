@@ -26,6 +26,7 @@ type tree struct {
 	root     string
 	nodes    map[string]*node
 	children map[string]int
+	occupied map[string]int
 }
 
 type operation struct {
@@ -38,14 +39,22 @@ type operation struct {
 }
 
 type plan struct {
-	operations []operation
-	dirs       map[string]os.FileInfo
+	operations     []operation
+	dirs           map[string]os.FileInfo
+	protectContent bool
 }
 
 func pathKey(path string) string {
-	path = filepath.Clean(path)
+	return filepath.Clean(path)
+}
+
+func collisionKey(path string) string {
+	path = pathKey(path)
 	if runtime.GOOS == "windows" {
-		path = strings.ToLower(path)
+		// Preserve distinct scanned paths on case-sensitive NTFS directories.
+		// Reserve case variants of destination names conservatively within each
+		// exact parent, including names created only in a dry-run plan.
+		return filepath.Dir(path) + "\x00" + strings.ToUpper(filepath.Base(path))
 	}
 	return path
 }
@@ -76,7 +85,7 @@ func run(config Config, output io.Writer) error {
 }
 
 func scanTree(root string, config Config, planned *plan) (*tree, error) {
-	result := &tree{root: root, nodes: make(map[string]*node), children: make(map[string]int)}
+	result := &tree{root: root, nodes: make(map[string]*node), children: make(map[string]int), occupied: make(map[string]int)}
 	err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return fmt.Errorf("scan %q: %w", path, walkErr)
@@ -107,11 +116,17 @@ func scanTree(root string, config Config, planned *plan) (*tree, error) {
 func (t *tree) add(entry *node) {
 	t.nodes[pathKey(entry.path)] = entry
 	t.children[pathKey(filepath.Dir(entry.path))]++
+	t.occupied[collisionKey(entry.path)]++
 }
 
 func (t *tree) remove(path string) {
 	delete(t.nodes, pathKey(path))
 	t.children[pathKey(filepath.Dir(path))]--
+	t.occupied[collisionKey(path)]--
+}
+
+func (t *tree) destinationExists(path string) bool {
+	return t.occupied[collisionKey(path)] != 0
 }
 
 func (t *tree) sortedNodes() []*node {
@@ -124,7 +139,7 @@ func (t *tree) sortedNodes() []*node {
 }
 
 func buildPlan(config Config, logger *log.Logger) (*plan, error) {
-	planned := &plan{dirs: make(map[string]os.FileInfo)}
+	planned := &plan{dirs: make(map[string]os.FileInfo), protectContent: config.Mode == ModeDedup}
 	for _, root := range config.Roots {
 		logger.Infof("Planning mode=%s dry_run=%t root=%s", config.Mode, config.DryRun, root)
 		files, err := scanTree(root, config, planned)
@@ -137,7 +152,9 @@ func buildPlan(config Config, logger *log.Logger) (*plan, error) {
 				return nil, err
 			}
 			if config.EmptyDir {
-				files.planEmptyDirs(config, planned, true, false)
+				if err := files.planEmptyDirs(config, planned, true, false); err != nil {
+					return nil, err
+				}
 			}
 		case ModeDeleteFilesIncluding:
 			for _, entry := range files.sortedNodes() {
@@ -153,7 +170,9 @@ func buildPlan(config Config, logger *log.Logger) (*plan, error) {
 			}
 		case ModeFlatten:
 			files.planFlatten(config, planned)
-			files.planEmptyDirs(config, planned, false, true)
+			if err := files.planEmptyDirs(config, planned, false, true); err != nil {
+				return nil, err
+			}
 		}
 	}
 	return planned, nil
@@ -212,6 +231,11 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 				if err := file.verify(); err != nil {
 					return err
 				}
+				if p.protectContent && file.info.Mode().IsRegular() {
+					if err := verifyDedupContent(file); err != nil {
+						return err
+					}
+				}
 				checked[file] = true
 			}
 		}
@@ -243,24 +267,27 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 				}
 				current[op.file] = updated
 			case "delete":
+				if p.protectContent {
+					if err := verifyDedupContent(file); err != nil {
+						return err
+					}
+				}
+				var deleteErr error
 				if op.keeper != nil {
 					keeper := lookup(op.keeper)
 					if err := p.verifyParents(op.root, keeper.path); err != nil {
 						return err
 					}
-					equal, err := sameContents(file, keeper)
-					if err != nil {
-						return err
+					deleteErr = removeDuplicateVerified(file, keeper)
+				} else {
+					remove := removeVerified
+					if p.protectContent {
+						remove = removeVerifiedContent
 					}
-					if !equal {
-						return fmt.Errorf("duplicate content changed: %q and %q", file.path, keeper.path)
-					}
+					deleteErr = remove(file)
 				}
-				if err := file.verify(); err != nil {
-					return err
-				}
-				if err := os.Remove(file.path); err != nil {
-					return fmt.Errorf("delete %q: %w", file.path, err)
+				if deleteErr != nil {
+					return fmt.Errorf("delete %q: %w", file.path, deleteErr)
 				}
 			case "rmdir":
 				if err := file.verify(); err != nil {
@@ -293,6 +320,17 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 		logger.Infof("Dry run: would delete %d files (%d bytes), move %d files, and remove %d empty directories", deleted, bytesDeleted, moved, directories)
 	} else {
 		logger.Infof("%d files deleted (%d bytes), %d files moved, %d empty directories removed", deleted, bytesDeleted, moved, directories)
+	}
+	return nil
+}
+
+func verifyDedupContent(file *fileRecord) error {
+	supported, err := dedupContentSupported(file)
+	if err != nil {
+		return err
+	}
+	if !supported {
+		return fmt.Errorf("additional file contents must be preserved: %q", file.path)
 	}
 	return nil
 }

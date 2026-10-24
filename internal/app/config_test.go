@@ -1,9 +1,12 @@
 package app
 
 import (
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -87,5 +90,72 @@ func TestInvalidRoots(t *testing.T) {
 	}
 	if _, err := testConfig(link, ModeDedup).normalized(); err == nil {
 		t.Fatal("accepted symbolic-link root")
+	}
+}
+
+func directoryAlias(t *testing.T, target, alias string) {
+	t.Helper()
+	if err := os.Symlink(target, alias); err == nil {
+		return
+	} else if runtime.GOOS != "windows" {
+		t.Skipf("directory aliases unavailable: %v", err)
+	}
+	// Junctions do not require the Windows symbolic-link privilege.
+	if output, err := exec.Command("cmd", "/c", "mklink", "/J", alias, target).CombinedOutput(); err != nil {
+		t.Skipf("directory junctions unavailable: %v: %s", err, output)
+	}
+}
+
+func TestRootAncestorAliasesRejectedBeforeEdits(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	physical := filepath.Join(base, "physical")
+	root := filepath.Join(physical, "root")
+	writeFixture(t, root, map[string]string{"delete-me": "first", "nested/delete-me": "second"})
+	alias := filepath.Join(base, "alias")
+	directoryAlias(t, physical, alias)
+	for _, roots := range [][]string{
+		{root, filepath.Join(alias, "root")},
+		{root, filepath.Join(alias, "root", "nested")},
+		{filepath.Join(root, "nested"), filepath.Join(alias, "root")},
+	} {
+		config := testConfig(root, ModeDeleteFilesIncluding)
+		config.Roots = roots
+		config.DeleteFilesIncluding = []string{"delete-me"}
+		before := snapshot(t, root)
+		if err := run(config, io.Discard); err == nil || !strings.Contains(err.Error(), "overlap") {
+			t.Fatalf("expected overlap error for %v, got %v", roots, err)
+		}
+		if !reflect.DeepEqual(before, snapshot(t, root)) {
+			t.Fatalf("aliased root validation allowed edits: %v", roots)
+		}
+	}
+}
+
+func TestRootAncestorAliasPreservesKeywordPath(t *testing.T) {
+	t.Parallel()
+	base := t.TempDir()
+	physical := filepath.Join(base, "physical")
+	root := filepath.Join(physical, "root")
+	writeFixture(t, root, map[string]string{"delete-me": "keep"})
+	alias := filepath.Join(base, "__configured_alias__")
+	directoryAlias(t, physical, alias)
+	configured := filepath.Join(alias, "root")
+	config := testConfig(configured, ModeDeleteFilesIncluding)
+	config.IgnoreKeywords = []string{"__configured_alias__"}
+	config.DeleteFilesIncluding = []string{"delete-me"}
+	normalized, err := config.normalized()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(normalized.Roots, []string{configured}) {
+		t.Fatalf("configured root path changed: %v", normalized.Roots)
+	}
+	before := snapshot(t, root)
+	if err := run(config, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(before, snapshot(t, root)) {
+		t.Fatal("resolving root ancestors changed keyword-filter behavior")
 	}
 }
