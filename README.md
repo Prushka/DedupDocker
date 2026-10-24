@@ -63,8 +63,10 @@ copy keeps its original name. With `EMPTY_DIR=true`, it also removes empty
 directories and eligible `.DS_Store` files; excluded files keep their folders.
 Metadata and ordinary files are deduplicated separately, so `.DS_Store` can
 never become an ordinary file's surviving name. It does not run filename-matching
-deletion. Files with additional NTFS streams or Linux extended attributes are
-preserved during dedup and metadata cleanup rather than losing their extra data.
+deletion. Duplicate matching uses the normal file bytes only; Linux extended
+attributes and NTFS named streams do not exclude files or change duplicate
+identity. The retained file keeps its own attributes and streams. Extra metadata
+or stream data belonging only to a deleted copy is not merged into the keeper.
 Names that are already hardlinks to the retained file are preserved because
 they already share its storage.
 

@@ -3,9 +3,11 @@
 package app
 
 import (
+	"bytes"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -51,11 +53,11 @@ func TestSafetyLinuxNativeMovePreservesExtendedAttributes(t *testing.T) {
 	}
 }
 
-func TestSafetyLinuxDedupPreservesExtendedAttributes(t *testing.T) {
+func TestSafetyLinuxDedupUsesFileBytesWithExtendedAttributes(t *testing.T) {
 	for _, late := range []bool{false, true} {
 		t.Run(map[bool]string{false: "existing", true: "late"}[late], func(t *testing.T) {
 			root := t.TempDir()
-			files := map[string]string{"a.txt": "same", "longer-name.txt": "same", "metadata/.DS_Store": "finder"}
+			files := map[string]string{"a.txt": "same", "nested/longer-name.txt": "same", "unique.txt": "diff", "metadata/.DS_Store": "finder"}
 			writeFixture(t, root, files)
 			config := testConfig(root, ModeDedup)
 			config.EmptyDir = true
@@ -67,25 +69,52 @@ func TestSafetyLinuxDedupPreservesExtendedAttributes(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			for _, name := range []string{"a.txt", "metadata/.DS_Store"} {
+			attributes := map[string]string{
+				"a.txt": "retained attributes", "nested/longer-name.txt": "duplicate attributes",
+				"unique.txt": "unique file attributes", "metadata/.DS_Store": "finder attributes",
+			}
+			for name, value := range attributes {
 				path := filepath.Join(root, filepath.FromSlash(name))
 				info, err := os.Stat(path)
 				if err != nil {
 					t.Fatal(err)
 				}
 				writeSafetyAttribute(t, path)
+				if err := unix.Setxattr(path, "user.dedup-test", []byte(value), 0); err != nil {
+					t.Fatal(err)
+				}
 				if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
 					t.Fatal(err)
 				}
 			}
-			if late {
-				if err := planned.execute(false, testLogger()); err == nil {
-					t.Fatal("deleted a file with late extended attributes")
-				}
-			} else if err := run(config, io.Discard); err != nil {
+			dryConfig := config
+			dryConfig.DryRun = true
+			before := snapshot(t, root)
+			if err := run(dryConfig, io.Discard); err != nil {
 				t.Fatal(err)
 			}
-			assertLayout(t, root, files)
+			if !reflect.DeepEqual(before, snapshot(t, root)) {
+				t.Fatal("dry run changed files with extended attributes")
+			}
+			var logs bytes.Buffer
+			if late {
+				if err := planned.execute(false, testLogger()); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := run(config, &logs); err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(logs.String(), "Skipping duplicate removal") {
+				t.Fatal("extended attributes still excluded files from dedup")
+			}
+			assertLayout(t, root, map[string]string{"longer-name.txt": "same", "unique.txt": "diff"})
+			for name, expected := range map[string]string{"longer-name.txt": "retained attributes", "unique.txt": "unique file attributes"} {
+				buffer := make([]byte, 128)
+				size, err := unix.Getxattr(filepath.Join(root, name), "user.dedup-test", buffer)
+				if err != nil || string(buffer[:size]) != expected {
+					t.Fatalf("retained file attributes changed at %s: %q, %v", name, buffer, err)
+				}
+			}
 		})
 	}
 }
@@ -179,7 +208,7 @@ func TestSafetyHeldLinuxKeeperRetainsRecoveryCopyAfterReplacement(t *testing.T) 
 		t.Fatalf("compare captured keeper: %t, %v", equal, err)
 	}
 	writeFixture(t, root, map[string]string{"keeper": "unrelated replacement"})
-	if err := removeVerifiedContent(source); err != nil {
+	if err := removeVerified(source); err != nil {
 		_ = captured.close()
 		t.Fatal(err)
 	}

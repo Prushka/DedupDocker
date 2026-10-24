@@ -41,12 +41,11 @@ type operation struct {
 }
 
 type plan struct {
-	operations     []operation
-	dirs           map[string]os.FileInfo
-	protectContent bool
-	directoryIDs   map[directoryID]string
-	ctx            context.Context
-	passwords      []string
+	operations   []operation
+	dirs         map[string]os.FileInfo
+	directoryIDs map[directoryID]string
+	ctx          context.Context
+	passwords    []string
 }
 
 type directoryID struct{ device, inode uint64 }
@@ -181,7 +180,7 @@ func buildPlan(config Config, logger *log.Logger) (*plan, error) {
 }
 
 func buildPlanContext(ctx context.Context, config Config, logger *log.Logger) (*plan, error) {
-	planned := &plan{dirs: make(map[string]os.FileInfo), protectContent: config.Mode == ModeDedup, ctx: ctx, passwords: config.Passwords}
+	planned := &plan{dirs: make(map[string]os.FileInfo), ctx: ctx, passwords: config.Passwords}
 	for _, root := range config.Roots {
 		logger.Infof("Planning mode=%s dry_run=%t root=%s", config.Mode, config.DryRun, root)
 		files, err := scanTree(root, config, planned)
@@ -278,11 +277,6 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 				if err := file.verify(); err != nil {
 					return err
 				}
-				if p.protectContent && file.info.Mode().IsRegular() {
-					if err := verifyDedupContent(file); err != nil {
-						return err
-					}
-				}
 				checked[file] = true
 			}
 		}
@@ -324,11 +318,6 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 				}
 				current[op.file] = updated
 			case "delete":
-				if p.protectContent {
-					if err := verifyDedupContent(file); err != nil {
-						return err
-					}
-				}
 				var deleteErr error
 				if op.keeper != nil {
 					keeper := lookup(op.keeper)
@@ -337,11 +326,7 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 					}
 					deleteErr = removeDuplicateVerified(file, keeper)
 				} else {
-					remove := removeVerified
-					if p.protectContent {
-						remove = removeVerifiedContent
-					}
-					deleteErr = remove(file)
+					deleteErr = removeVerified(file)
 				}
 				if deleteErr != nil {
 					return fmt.Errorf("delete %q: %w", file.path, deleteErr)
@@ -379,17 +364,6 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 		logger.Infof("Dry run: would delete %d files (%d bytes), move %d files, remove %d empty directories, and extract %d archives", deleted, bytesDeleted, moved, directories, extracted)
 	} else {
 		logger.Infof("%d files deleted (%d bytes), %d files moved, %d empty directories removed, %d archives extracted", deleted, bytesDeleted, moved, directories, extracted)
-	}
-	return nil
-}
-
-func verifyDedupContent(file *fileRecord) error {
-	supported, err := dedupContentSupported(file)
-	if err != nil {
-		return err
-	}
-	if !supported {
-		return fmt.Errorf("additional file contents must be preserved: %q", file.path)
 	}
 	return nil
 }

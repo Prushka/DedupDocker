@@ -19,28 +19,25 @@ func writeSafetyStream(t *testing.T, path, content string) {
 	}
 }
 
-func TestSafetyDedupPreservesNamedStreams(t *testing.T) {
+func TestSafetyDedupUsesFileBytesWithNamedStreams(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, map[string]string{"a.txt": "same", "longer-name.txt": "same", "metadata/.DS_Store": "finder"})
-	writeSafetyStream(t, filepath.Join(root, "a.txt"), "unique user data")
+	writeSafetyStream(t, filepath.Join(root, "a.txt"), "duplicate metadata")
+	writeSafetyStream(t, filepath.Join(root, "longer-name.txt"), "retained metadata")
 	writeSafetyStream(t, filepath.Join(root, "metadata", ".DS_Store"), "metadata payload")
 	config := testConfig(root, ModeDedup)
 	config.EmptyDir = true
 	if err := run(config, io.Discard); err != nil {
 		t.Fatal(err)
 	}
-	assertLayout(t, root, map[string]string{"a.txt": "same", "longer-name.txt": "same", "metadata/.DS_Store": "finder"})
-	for path, expected := range map[string]string{
-		filepath.Join(root, "a.txt"): "unique user data", filepath.Join(root, "metadata", ".DS_Store"): "metadata payload",
-	} {
-		actual, err := os.ReadFile(path + ":dedup-test")
-		if err != nil || string(actual) != expected {
-			t.Fatalf("named stream changed at %q: %q, %v", path, actual, err)
-		}
+	assertLayout(t, root, map[string]string{"longer-name.txt": "same"})
+	actual, err := os.ReadFile(filepath.Join(root, "longer-name.txt") + ":dedup-test")
+	if err != nil || string(actual) != "retained metadata" {
+		t.Fatalf("retained file's named stream changed: %q, %v", actual, err)
 	}
 }
 
-func TestSafetyDedupRejectsLateNamedStreams(t *testing.T) {
+func TestSafetyDedupIgnoresLateNamedStreams(t *testing.T) {
 	for _, metadata := range []bool{false, true} {
 		t.Run(map[bool]string{false: "duplicate", true: "metadata"}[metadata], func(t *testing.T) {
 			root := t.TempDir()
@@ -72,13 +69,14 @@ func TestSafetyDedupRejectsLateNamedStreams(t *testing.T) {
 			if err := target.verify(); err != nil {
 				t.Fatalf("fixture did not preserve original metadata: %v", err)
 			}
-			if err := planned.execute(false, testLogger()); err == nil {
-				t.Fatal("deleted a file with a new named stream")
+			if err := planned.execute(false, testLogger()); err != nil {
+				t.Fatal(err)
 			}
-			assertLayout(t, root, files)
-			if actual, err := os.ReadFile(target.path + ":dedup-test"); err != nil || string(actual) != "arrived after planning" {
-				t.Fatalf("late named stream changed: %q, %v", actual, err)
+			expected := map[string]string{"longer-name.txt": "same"}
+			if metadata {
+				expected = nil
 			}
+			assertLayout(t, root, expected)
 		})
 	}
 }
@@ -236,7 +234,7 @@ func TestSafetyHeldWindowsKeeperPreventsReplacementDuringDeletion(t *testing.T) 
 	if err := os.WriteFile(keeper.path, []byte("replacement"), 0644); err == nil {
 		t.Fatal("retained keeper allowed a concurrent writer")
 	}
-	if err := removeVerifiedContent(source); err != nil {
+	if err := removeVerified(source); err != nil {
 		t.Fatal(err)
 	}
 	if err := captured.close(); err != nil {
@@ -246,16 +244,22 @@ func TestSafetyHeldWindowsKeeperPreventsReplacementDuringDeletion(t *testing.T) 
 	assertLayout(t, root, map[string]string{"keeper": "original content"})
 }
 
-func TestSafetyDuplicateRemovalRefusesAdditionalStreams(t *testing.T) {
+func TestSafetyDuplicateRemovalIgnoresAdditionalStreams(t *testing.T) {
 	for _, extraAt := range []string{"source", "keeper"} {
 		t.Run(extraAt, func(t *testing.T) {
 			root := t.TempDir()
 			writeFixture(t, root, map[string]string{"source": "same", "keeper": "same"})
 			writeSafetyStream(t, filepath.Join(root, extraAt), "unique associated data")
-			if err := removeDuplicateVerified(recordFile(t, filepath.Join(root, "source")), recordFile(t, filepath.Join(root, "keeper"))); err == nil {
-				t.Fatal("duplicate removal accepted additional streams")
+			if err := removeDuplicateVerified(recordFile(t, filepath.Join(root, "source")), recordFile(t, filepath.Join(root, "keeper"))); err != nil {
+				t.Fatal(err)
 			}
-			assertLayout(t, root, map[string]string{"source": "same", "keeper": "same"})
+			assertLayout(t, root, map[string]string{"keeper": "same"})
+			if extraAt == "keeper" {
+				actual, err := os.ReadFile(filepath.Join(root, "keeper") + ":dedup-test")
+				if err != nil || string(actual) != "unique associated data" {
+					t.Fatalf("retained stream changed: %q, %v", actual, err)
+				}
+			}
 		})
 	}
 }

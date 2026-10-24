@@ -17,14 +17,6 @@ func (t *tree) planDedup(config Config, planned *plan, logger *log.Logger) error
 	bySize := make(map[fileClass][]*node)
 	for _, entry := range t.sortedNodes() {
 		if config.includes(entry.path, entry.file.info) {
-			supported, err := dedupContentSupported(entry.file)
-			if err != nil {
-				return err
-			}
-			if !supported {
-				logger.Warnf("Skipping duplicate removal for file with additional data or attributes: %s", entry.path)
-				continue
-			}
 			class := fileClass{size: entry.file.info.Size(), metadata: isMetadataFile(entry.file.path)}
 			if class.metadata && config.EmptyDir {
 				continue // Metadata cleanup will remove these original files.

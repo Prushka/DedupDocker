@@ -26,9 +26,10 @@ func validateCaptured(expected *fileRecord, actual os.FileInfo, identityOnly boo
 	return nil
 }
 
-// dedupContentSupported rejects file data or metadata which byte comparisons of
-// the default stream cannot represent. Native moves can still preserve it.
-func dedupContentSupported(file *fileRecord) (supported bool, resultErr error) {
+// plainContentSupported protects operations that cannot preserve associated data
+// when copying or unpacking a source. Dedup compares the normal file bytes and
+// deliberately does not use this restriction.
+func plainContentSupported(file *fileRecord) (supported bool, resultErr error) {
 	if err := contextError(file.ctx); err != nil {
 		return false, err
 	}
@@ -41,11 +42,7 @@ func dedupContentSupported(file *fileRecord) (supported bool, resultErr error) {
 }
 
 func removeVerified(file *fileRecord) error {
-	return removeCaptured(file, false, false)
-}
-
-func removeVerifiedContent(file *fileRecord) error {
-	return removeCaptured(file, false, true)
+	return removeCaptured(file, false)
 }
 
 // Hold the retained copy through comparison and source deletion. In particular,
@@ -65,14 +62,12 @@ func removeDuplicateVerified(source, keeper *fileRecord) (resultErr error) {
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, captured.close()) }()
-	supported, err := contentSupportedHandle(captured.handle())
+	duplicate, err := captureFile(source, false, true)
 	if err != nil {
 		return err
 	}
-	if !supported {
-		return fmt.Errorf("additional file content or metadata prevents duplicate deletion: %q", keeper.path)
-	}
-	equal, err = sameContents(source, captured.record())
+	defer func() { resultErr = errors.Join(resultErr, duplicate.close()) }()
+	equal, err = sameContents(duplicate.record(), captured.record())
 	if err != nil {
 		return err
 	}
@@ -87,28 +82,22 @@ func removeDuplicateVerified(source, keeper *fileRecord) (resultErr error) {
 	if err := captured.record().verify(); err != nil {
 		return err
 	}
-	return removeVerifiedContent(source)
+	if err := contextError(source.ctx); err != nil {
+		return err
+	}
+	return duplicate.remove()
 }
 
 func removeCreated(file *fileRecord) error {
-	return removeCaptured(file, true, false)
+	return removeCaptured(file, true)
 }
 
-func removeCaptured(file *fileRecord, identityOnly, protectContent bool) (resultErr error) {
-	captured, err := captureFile(file, identityOnly, protectContent)
+func removeCaptured(file *fileRecord, identityOnly bool) (resultErr error) {
+	captured, err := captureFile(file, identityOnly, false)
 	if err != nil {
 		return err
 	}
 	defer func() { resultErr = errors.Join(resultErr, captured.close()) }()
-	if protectContent {
-		supported, err := contentSupportedHandle(captured.handle())
-		if err != nil {
-			return err
-		}
-		if !supported {
-			return fmt.Errorf("additional file content or metadata prevents deletion: %q", file.path)
-		}
-	}
 	return captured.remove()
 }
 

@@ -44,6 +44,21 @@ for mode in dedup delete-files-including flatten; do
   printf 'existing destination\n' > "$data/child/existing.txt"
   printf 'nested content with the same filename\n' > "$data/child/nested/existing.txt"
   ln -s /etc/passwd "$data/child/nested/delete-me-link"
+  if [[ "$mode" == dedup ]]; then
+    python3 - "$data" <<'PY'
+import os
+import sys
+
+root = sys.argv[1]
+for relative, value in {
+    'a-original.txt': b'retained file metadata',
+    'child/nested/longer-duplicate-name.txt': b'different duplicate metadata',
+    'metadata/.DS_Store': b'finder metadata',
+    'keep.txt': b'unique file metadata',
+}.items():
+    os.setxattr(os.path.join(root, relative), 'user.dedup-regression', value)
+PY
+  fi
   cp -a "$data/." "$expected/"
 
   case "$mode" in
@@ -80,6 +95,16 @@ for mode in dedup delete-files-including flatten; do
   snapshot "$expected" > "$fixture/expected.snapshot"
   snapshot "$data" > "$fixture/actual.snapshot"
   diff -u "$fixture/expected.snapshot" "$fixture/actual.snapshot"
+  if [[ "$mode" == dedup ]]; then
+    python3 - "$data" <<'PY'
+import os
+import sys
+
+root = sys.argv[1]
+assert os.getxattr(os.path.join(root, 'longer-duplicate-name.txt'), 'user.dedup-regression') == b'retained file metadata'
+assert os.getxattr(os.path.join(root, 'keep.txt'), 'user.dedup-regression') == b'unique file metadata'
+PY
+  fi
 
   # Invalid modes must fail before making any edits, even with DRY_RUN=false.
   before="$(snapshot "$data")"

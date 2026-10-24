@@ -92,7 +92,7 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	supported, err := dedupContentSupported(source)
+	supported, err := plainContentSupported(source)
 	if err != nil {
 		return err
 	}

@@ -137,7 +137,7 @@ func copyMove(source *fileRecord, destination string) (result *fileRecord, resul
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	supported, err := dedupContentSupported(source)
+	supported, err := plainContentSupported(source)
 	if err != nil {
 		return nil, err
 	}

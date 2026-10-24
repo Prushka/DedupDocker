@@ -16,13 +16,7 @@ func (t *tree) planEmptyDirs(config Config, planned *plan, removeMetadata, keepC
 			if !isMetadataFile(entry.file.path) || !config.includes(entry.path, entry.file.info) {
 				continue
 			}
-			supported, err := dedupContentSupported(entry.file)
-			if err != nil {
-				return err
-			}
-			if supported {
-				t.planDelete(planned, entry, nil)
-			}
+			t.planDelete(planned, entry, nil)
 		}
 	}
 	var directories []*node
