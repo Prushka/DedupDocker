@@ -6,8 +6,6 @@ ARG TARGETOS
 ARG TARGETARCH
 
 WORKDIR /app
-RUN apt update -y
-RUN apt install upx-ucl -y
 
 COPY go.mod ./
 COPY go.sum ./
@@ -16,7 +14,6 @@ RUN go mod download
 COPY . .
 
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags "-s -w" -a -installsuffix cgo -o main ./cmd/dedup
-RUN upx --best --lzma main
 
 FROM alpine:latest
 
