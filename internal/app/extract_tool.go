@@ -172,6 +172,9 @@ func parseArchiveListing(listing string) ([]archiveMember, error) {
 		}
 		seen[key] = true
 		attributes := fields["Attributes"]
+		if fields["NT Security"] != "" {
+			return nil, fmt.Errorf("archive contains security descriptors that cannot be preserved: %q", relative)
+		}
 		for _, value := range strings.Fields(attributes) {
 			if len(value) >= 10 && strings.ContainsRune("lspbc", rune(value[0])) {
 				return nil, fmt.Errorf("archive contains a link or special file: %q", relative)

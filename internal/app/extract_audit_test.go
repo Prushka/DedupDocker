@@ -133,6 +133,7 @@ func TestExtractListingRejectsConflictsAndLinks(t *testing.T) {
 		"Path = link\nFolder = -\nSize = 3\nAttributes = A_ lrwxrwxrwx\n",
 		"Path = link\nFolder = -\nSize = 3\nHard Link = other\n",
 		"Path = file\nFolder = -\nSize = -1\n",
+		"Path = file\nFolder = -\nSize = 1\nNT Security = 0\n",
 	} {
 		if _, err := parseArchiveListing(listing); err == nil {
 			t.Fatalf("accepted unsafe inventory: %q", listing)

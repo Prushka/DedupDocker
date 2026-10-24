@@ -107,7 +107,8 @@ Extraction uses a private snapshot, requires warning-free archive validation,
 verifies the written files, publishes the output without overwriting, and only
 then removes the verified original archive. Wrong passwords, corrupt data,
 unsafe paths, ambiguous names, links, special files, duplicate member paths,
-and unsupported extra attributes produce an error with the original retained.
+and unsupported extra attributes or archived security descriptors produce an
+error with the original retained.
 Split/multipart archives are not assembled automatically. Earlier completed
 archives remain extracted if a later archive fails. No filenames are shortened.
 
