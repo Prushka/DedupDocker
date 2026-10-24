@@ -118,6 +118,10 @@ func captureFile(file *fileRecord, identityOnly, read bool) (capturedFile, error
 func (file *linuxCapturedFile) handle() *os.File    { return file.fd }
 func (file *linuxCapturedFile) record() *fileRecord { return file.captured }
 
+func (file *linuxCapturedFile) sync() error {
+	return errors.Join(file.fd.Sync(), file.directory.Sync(), file.parent.Sync())
+}
+
 func (file *linuxCapturedFile) remove() error {
 	actual, err := file.fd.Stat()
 	if err != nil {

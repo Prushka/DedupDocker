@@ -187,6 +187,10 @@ func windowsError(err error) error {
 func (file *windowsCapturedFile) handle() *os.File    { return file.fd }
 func (file *windowsCapturedFile) record() *fileRecord { return file.captured }
 
+// The copy was flushed before publication. Windows capture locks its published
+// name in place, so it needs no additional staging-directory synchronization.
+func (file *windowsCapturedFile) sync() error { return nil }
+
 func (file *windowsCapturedFile) remove() error {
 	actual, err := file.fd.Stat()
 	if err != nil {

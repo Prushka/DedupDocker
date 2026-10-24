@@ -54,15 +54,6 @@ func preserveCopyMetadata(file *os.File, source os.FileInfo) error {
 	return file.Chmod(source.Mode())
 }
 
-func syncParentDirectory(path string) (resultErr error) {
-	directory, err := os.Open(filepath.Dir(path))
-	if err != nil {
-		return err
-	}
-	defer func() { resultErr = errors.Join(resultErr, directory.Close()) }()
-	return directory.Sync()
-}
-
 func removeEmptyDirectory(file *fileRecord) error {
 	if err := file.verify(); err != nil {
 		return err

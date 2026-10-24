@@ -67,3 +67,23 @@ func TestSafetyDuplicateRemovalRechecksContents(t *testing.T) {
 	}
 	assertLayout(t, root, map[string]string{"source": "same", "keeper": "DIFF"})
 }
+
+func TestSafetyCopiedSourceSurvivesChangedDestination(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, map[string]string{"source": "same", "destination": "same"})
+	destination := recordFile(t, filepath.Join(root, "destination"))
+	source, err := captureFile(recordFile(t, filepath.Join(root, "source")), false, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, root, map[string]string{"destination": "DIFF"})
+	if err := os.Chtimes(destination.path, destination.info.ModTime(), destination.info.ModTime()); err != nil {
+		_ = source.close()
+		t.Fatal(err)
+	}
+	finishErr, closeErr := finishCopiedMove(source, destination), source.close()
+	if finishErr == nil || closeErr != nil {
+		t.Fatalf("changed copy accepted or source restoration failed: %v, %v", finishErr, closeErr)
+	}
+	assertLayout(t, root, map[string]string{"source": "same", "destination": "DIFF"})
+}

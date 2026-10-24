@@ -223,18 +223,35 @@ func copyMove(source *fileRecord, destination string) (result *fileRecord, resul
 		return nil, err
 	}
 	published = true
-	// Persist the published directory entry before removing the source on the
-	// other filesystem. Syncing file data alone does not persist its new name.
-	if err := syncParentDirectory(destination); err != nil {
-		return nil, fmt.Errorf("persist copied destination %q: %w", destination, err)
-	}
-	if err := contextError(source.ctx); err != nil {
-		return nil, err
-	}
-	// Keep the verified destination if deleting the captured source fails. It
-	// may be the only surviving copy after an external source change.
-	if err := captured.remove(); err != nil {
+	if err := finishCopiedMove(captured, result); err != nil {
 		return nil, fmt.Errorf("remove copied source %q: %w", source.path, err)
 	}
 	return result, nil
+}
+
+func finishCopiedMove(source capturedFile, destination *fileRecord) (resultErr error) {
+	// Hold the destination through its last byte comparison and source removal.
+	// If its public name is replaced, close retains a recovery copy instead of
+	// overwriting the replacement or losing the last original-content copy.
+	retained, err := captureFile(destination, false, true)
+	if err != nil {
+		return err
+	}
+	defer func() { resultErr = errors.Join(resultErr, retained.close()) }()
+	equal, err := sameContents(source.record(), retained.record())
+	if err != nil {
+		return err
+	}
+	if !equal {
+		return fmt.Errorf("published copy changed: %q", destination.path)
+	}
+	// Persist file data and both staging-directory entries before removing the
+	// source on the other filesystem. A later crash leaves a recoverable copy.
+	if err := retained.sync(); err != nil {
+		return fmt.Errorf("persist copied destination %q: %w", destination.path, err)
+	}
+	if err := contextError(destination.ctx); err != nil {
+		return err
+	}
+	return source.remove()
 }

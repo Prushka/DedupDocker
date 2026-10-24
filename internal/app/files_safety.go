@@ -14,6 +14,7 @@ type capturedFile interface {
 	record() *fileRecord
 	remove() error
 	move(string) (*fileRecord, error)
+	sync() error
 	close() error
 }
 
