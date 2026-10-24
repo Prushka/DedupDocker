@@ -8,8 +8,8 @@ import (
 )
 
 func TestRecoveryDirectoriesStopAllModesBeforeEdits(t *testing.T) {
-	for _, mode := range []string{ModeDedup, ModeDeleteFilesIncluding, ModeFlatten} {
-		for _, directory := range []string{".dedup-source-interrupted", ".dedup-copy-interrupted"} {
+	for _, mode := range []string{ModeDedup, ModeDeleteFilesIncluding, ModeFlatten, ModeExtract} {
+		for _, directory := range []string{".dedup-source-interrupted", ".dedup-copy-interrupted", ".dedup-extract-interrupted"} {
 			t.Run(mode+directory, func(t *testing.T) {
 				root := t.TempDir()
 				writeFixture(t, root, map[string]string{"a-delete-me": "same", "child/b-delete-me": "same", "child/" + directory + "/delete-me": "recovery data"})

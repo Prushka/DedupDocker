@@ -14,10 +14,11 @@ import (
 func configEnvironment(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	for _, name := range []string{"MODE", "DRY_RUN", "LOG", "EMPTY_DIR", "MIN_SIZE", "EXCLUDE_EXT", "DELETE_FILES_INCLUDING", "IGNORE_KEYWORDS", "DO_REMOVE", "DEDUP"} {
+	for _, name := range []string{"ROOTS", "PASSWORDS", "TARGET", "MODE", "DRY_RUN", "LOG", "EMPTY_DIR", "MIN_SIZE", "EXCLUDE_EXT", "DELETE_FILES_INCLUDING", "IGNORE_KEYWORDS", "DO_REMOVE", "DEDUP"} {
 		t.Setenv(name, "")
 	}
 	t.Setenv("ROOT", root)
+	t.Setenv("ROOTS", root)
 	return root
 }
 

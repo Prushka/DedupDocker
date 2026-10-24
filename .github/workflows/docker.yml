@@ -25,20 +25,26 @@ jobs:
         with:
           go-version-file: go.mod
           cache-dependency-path: go.sum
+      - name: Install archive tools
+        run: |
+          sh scripts/install-7zip.sh "$(uname -m)" "$RUNNER_TEMP/7zip"
+          echo "$RUNNER_TEMP/7zip/bin" >> "$GITHUB_PATH"
       - name: Test with race detection
+        env:
+          REQUIRE_ARCHIVE_TESTS: '1'
         run: go test -race -count=1 ./...
       - name: Vet
         run: go vet ./...
       - name: Test Linux mounts and cross-filesystem moves
         run: |
           go test -c -o "$RUNNER_TEMP/app-linux.test" ./internal/app
-          sudo unshare --mount --propagation private env DEDUP_MOUNT_TESTS=1 "$RUNNER_TEMP/app-linux.test" -test.v -test.run '^TestLinuxIntegration'
+          sudo unshare --mount --propagation private env DEDUP_MOUNT_TESTS=1 REQUIRE_ARCHIVE_TESTS=1 PATH="$PATH" "$RUNNER_TEMP/app-linux.test" -test.v -test.run '^TestLinuxIntegration'
       - name: Build command
         run: go build -o "$RUNNER_TEMP/dedup" ./cmd/dedup
       - name: Validate workflow and shell scripts
         run: |
           go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
-          shellcheck build.sh scripts/ci/docker-smoke.sh scripts/ci/build-script-test.sh
+          shellcheck build.sh scripts/install-7zip.sh scripts/ci/docker-smoke.sh scripts/ci/docker-extract-smoke.sh scripts/ci/build-script-test.sh
           bash scripts/ci/build-script-test.sh
 
   windows:
@@ -54,6 +60,8 @@ jobs:
           go-version-file: go.mod
           cache-dependency-path: go.sum
       - name: Test with race detection
+        env:
+          REQUIRE_ARCHIVE_TESTS: '1'
         run: go test -race -count=1 ./...
       - name: Vet
         run: go vet ./...
@@ -98,7 +106,9 @@ jobs:
           cache-from: type=gha,scope=dedup-amd64
           cache-to: type=gha,mode=max,scope=dedup-amd64
       - name: Smoke-test dry run and file cleanup
-        run: bash scripts/ci/docker-smoke.sh
+        run: |
+          bash scripts/ci/docker-smoke.sh
+          bash scripts/ci/docker-extract-smoke.sh
       - name: Log in to Docker Hub
         if: github.event_name != 'pull_request'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0

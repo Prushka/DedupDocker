@@ -15,6 +15,16 @@ import (
 func TestLinuxCopyRefusesInheritedDestinationACL(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, map[string]string{"source": "private source data"}, "destination")
+	destination := filepath.Join(root, "destination")
+	writeDefaultSafetyACL(t, destination)
+	if _, err := copyMove(recordFile(t, filepath.Join(root, "source")), filepath.Join(destination, "file")); err == nil {
+		t.Fatal("published a copy with an inherited ACL")
+	}
+	assertLayout(t, root, map[string]string{"source": "private source data"}, "destination")
+}
+
+func writeDefaultSafetyACL(t *testing.T, directory string) {
+	t.Helper()
 	// POSIX ACL version 2: an additional named user plus the required entries.
 	acl := make([]byte, 4)
 	binary.LittleEndian.PutUint32(acl, 2)
@@ -26,14 +36,27 @@ func TestLinuxCopyRefusesInheritedDestinationACL(t *testing.T) {
 		acl = binary.LittleEndian.AppendUint16(acl, entry.permissions)
 		acl = binary.LittleEndian.AppendUint32(acl, entry.id)
 	}
-	destination := filepath.Join(root, "destination")
-	if err := unix.Setxattr(destination, "system.posix_acl_default", acl, 0); err != nil {
+	if err := unix.Setxattr(directory, "system.posix_acl_default", acl, 0); err != nil {
 		t.Skipf("default ACLs unavailable: %v", err)
 	}
-	if _, err := copyMove(recordFile(t, filepath.Join(root, "source")), filepath.Join(destination, "file")); err == nil {
-		t.Fatal("published a copy with an inherited ACL")
+}
+
+func TestLinuxExtractRemovesInheritedACLs(t *testing.T) {
+	requireArchiveTool(t)
+	root := t.TempDir()
+	writeArchiveZIP(t, filepath.Join(root, "archive.zip"), map[string]string{"payload.txt": "private payload"})
+	writeDefaultSafetyACL(t, root)
+	if err := run(testConfig(root, ModeExtract), io.Discard); err != nil {
+		t.Fatal(err)
 	}
-	assertLayout(t, root, map[string]string{"source": "private source data"}, "destination")
+	for _, name := range []string{"archive", "archive/payload.txt"} {
+		for _, attribute := range []string{"system.posix_acl_access", "system.posix_acl_default"} {
+			size, _ := unix.Getxattr(filepath.Join(root, filepath.FromSlash(name)), attribute, nil)
+			if size > 0 {
+				t.Fatalf("extraction retained an inherited ACL on %s", name)
+			}
+		}
+	}
 }
 
 func TestLinuxMountInfoEscapedPaths(t *testing.T) {
@@ -123,6 +146,28 @@ func TestLinuxIntegrationDedupAcrossMountRetainsCopy(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertLayout(t, root, map[string]string{"file.txt": "retained across filesystems"}, "child/mounted")
+}
+
+func TestLinuxIntegrationExtractPreservesOwnerAndPrivateAccess(t *testing.T) {
+	requireLinuxMountTests(t)
+	requireArchiveTool(t)
+	root := t.TempDir()
+	archive := filepath.Join(root, "private.ZIP")
+	writeArchiveZIP(t, archive, map[string]string{"payload.txt": "private extracted payload"})
+	if err := os.Chown(archive, 12345, 12346); err != nil {
+		t.Fatal(err)
+	}
+	before := recordFile(t, archive)
+	if err := run(testConfig(root, ModeExtract), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	for name, permissions := range map[string]os.FileMode{"private": 0750, "private/payload.txt": 0640} {
+		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(name)))
+		if err != nil || !sameOwnership(before.info, info) || info.Mode().Perm() != permissions {
+			t.Fatalf("extraction changed ownership or widened access for %s: %v, %v", name, info, err)
+		}
+	}
+	assertLayout(t, root, map[string]string{"private/payload.txt": "private extracted payload"})
 }
 
 func TestLinuxIntegrationBindAliasesAbortBeforeEdits(t *testing.T) {

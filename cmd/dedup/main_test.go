@@ -32,6 +32,7 @@ func TestCommandEnvironmentAndExitStatus(t *testing.T) {
 		{"explicit-dry-dedup", []string{"MODE=dedup", "DRY_RUN=true", "EMPTY_DIR=true"}, false, false},
 		{"explicit-dry-delete", []string{"MODE=delete-files-including", "DRY_RUN=true"}, false, false},
 		{"explicit-dry-flatten", []string{"MODE=flatten", "DRY_RUN=true"}, false, false},
+		{"explicit-dry-extract", []string{"MODE=Extract", "DRY_RUN=true", "TARGET=/unused"}, false, false},
 		{"blank-dry-run", []string{"DRY_RUN="}, false, false},
 		{"dedup", []string{"MODE=dedup", "DRY_RUN=false"}, false, true},
 		{"delete", []string{"MODE=delete-files-including", "DRY_RUN=false", "EMPTY_DIR=true"}, false, true},
@@ -76,6 +77,7 @@ func TestCommandEnvironmentAndExitStatus(t *testing.T) {
 
 func commandEnvironment() []string {
 	settings := map[string]bool{
+		"ROOTS": true, "TARGET": true, "PASSWORDS": true,
 		"ROOT": true, "MODE": true, "DRY_RUN": true, "LOG": true, "EMPTY_DIR": true,
 		"MIN_SIZE": true, "EXCLUDE_EXT": true, "IGNORE_KEYWORDS": true,
 		"DELETE_FILES_INCLUDING": true, "DO_REMOVE": true, "DEDUP": true,

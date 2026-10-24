@@ -46,6 +46,7 @@ type plan struct {
 	protectContent bool
 	directoryIDs   map[directoryID]string
 	ctx            context.Context
+	passwords      []string
 }
 
 type directoryID struct{ device, inode uint64 }
@@ -117,7 +118,7 @@ func scanTree(root string, config Config, planned *plan) (*tree, error) {
 			return fmt.Errorf("inspect %q: %w", path, err)
 		}
 		if info.IsDir() {
-			if strings.HasPrefix(entry.Name(), ".dedup-source-") || strings.HasPrefix(entry.Name(), ".dedup-copy-") {
+			if strings.HasPrefix(entry.Name(), ".dedup-source-") || strings.HasPrefix(entry.Name(), ".dedup-copy-") || strings.HasPrefix(entry.Name(), ".dedup-extract-") {
 				return fmt.Errorf("unfinished file operation at %q; inspect and recover its files before retrying", path)
 			}
 			if identity, ok := directoryIdentity(info); ok {
@@ -180,7 +181,7 @@ func buildPlan(config Config, logger *log.Logger) (*plan, error) {
 }
 
 func buildPlanContext(ctx context.Context, config Config, logger *log.Logger) (*plan, error) {
-	planned := &plan{dirs: make(map[string]os.FileInfo), protectContent: config.Mode == ModeDedup, ctx: ctx}
+	planned := &plan{dirs: make(map[string]os.FileInfo), protectContent: config.Mode == ModeDedup, ctx: ctx, passwords: config.Passwords}
 	for _, root := range config.Roots {
 		logger.Infof("Planning mode=%s dry_run=%t root=%s", config.Mode, config.DryRun, root)
 		files, err := scanTree(root, config, planned)
@@ -214,6 +215,8 @@ func buildPlanContext(ctx context.Context, config Config, logger *log.Logger) (*
 			if err := files.planEmptyDirs(config, planned, false, true); err != nil {
 				return nil, err
 			}
+		case ModeExtract:
+			files.planExtract(config, planned)
 		}
 	}
 	return planned, nil
@@ -292,7 +295,7 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 		}
 		return file
 	}
-	var deleted, moved, directories int
+	var deleted, moved, directories, extracted int
 	var bytesDeleted int64
 	for _, op := range p.operations {
 		if err := contextError(p.ctx); err != nil {
@@ -304,6 +307,13 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 		if !dryRun {
 			file := lookup(op.file)
 			switch op.kind {
+			case "extract":
+				if err := p.verifyParents(op.root, op.to); err != nil {
+					return err
+				}
+				if err := extractArchive(p.ctx, file, op.to, p.dirs[pathKey(filepath.Dir(op.to))], p.passwords); err != nil {
+					return fmt.Errorf("extract %q: %w", file.path, err)
+				}
 			case "move":
 				if err := p.verifyParents(op.root, op.to); err != nil {
 					return err
@@ -350,6 +360,9 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 			prefix = "Would "
 		}
 		switch op.kind {
+		case "extract":
+			extracted++
+			logger.Infof("%sextract and remove verified archive: %s -> %s", prefix, op.from, op.to)
 		case "move":
 			moved++
 			logger.Infof("%smove: %s -> %s", prefix, op.from, op.to)
@@ -363,9 +376,9 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 		}
 	}
 	if dryRun {
-		logger.Infof("Dry run: would delete %d files (%d bytes), move %d files, and remove %d empty directories", deleted, bytesDeleted, moved, directories)
+		logger.Infof("Dry run: would delete %d files (%d bytes), move %d files, remove %d empty directories, and extract %d archives", deleted, bytesDeleted, moved, directories, extracted)
 	} else {
-		logger.Infof("%d files deleted (%d bytes), %d files moved, %d empty directories removed", deleted, bytesDeleted, moved, directories)
+		logger.Infof("%d files deleted (%d bytes), %d files moved, %d empty directories removed, %d archives extracted", deleted, bytesDeleted, moved, directories, extracted)
 	}
 	return nil
 }

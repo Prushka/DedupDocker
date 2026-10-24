@@ -1,7 +1,7 @@
 # DedupDocker
 
-A file cleanup utility with duplicate removal, filename matching, and folder
-flattening modes. `DRY_RUN` defaults to `true`: the app previews operations
+A file cleanup utility with duplicate removal, filename matching, folder
+flattening, and archive extraction modes. `DRY_RUN` defaults to `true`: the app previews operations
 without creating, moving, renaming, or deleting files or directories. Set
 `DRY_RUN=false` to apply the selected mode.
 
@@ -22,25 +22,26 @@ Requires Go 1.27.3 or later. From the repository root:
 
 ```sh
 go build -o dedup ./cmd/dedup
-ROOT=/path/to/files go run ./cmd/dedup
+ROOTS=/path/to/files go run ./cmd/dedup
 ```
 
 In PowerShell, set the root directory before running:
 
 ```powershell
-$env:ROOT = 'C:\path\to\files'
+$env:ROOTS = 'C:\path\to\files'
 go run ./cmd/dedup
 ```
 
-Configuration uses environment variables. `ROOT` defaults to `/dedup`, and
-`MODE` defaults to `dedup`.
+Configuration uses environment variables. `ROOTS` defaults to `/dedup`, and
+`MODE` defaults to `dedup`. `ROOT` remains a compatibility alias when `ROOTS`
+is unset. An explicitly empty `ROOTS` is invalid. `TARGET` is not used.
 
 ## Modes and configuration
 
 | Variable | Default | Behavior |
 | --- | --- | --- |
-| `MODE` | `dedup` | `dedup`, `delete-files-including`, or `flatten` |
-| `ROOT` | `/dedup` | Comma-separated directories, processed independently; physically overlapping roots, including ancestor aliases, are rejected |
+| `MODE` | `dedup` | `dedup`, `delete-files-including`, `flatten`, or `extract`; mode names are case-insensitive |
+| `ROOTS` | `/dedup` | Comma-separated directories, processed independently; physically overlapping roots, including ancestor aliases, are rejected |
 | `DRY_RUN` | `true` | Preview operations; set `false` to apply changes |
 | `EMPTY_DIR` | `false` | In dedup mode, also remove empty directories |
 | `DELETE_FILES_INCLUDING` | empty | Comma-separated, case-sensitive filename substrings for delete-files-including mode |
@@ -48,6 +49,7 @@ Configuration uses environment variables. `ROOT` defaults to `/dedup`, and
 | `EXCLUDE_EXT` | empty | Comma-separated extensions including the dot, matched without regard to case, in every mode |
 | `IGNORE_KEYWORDS` | empty | Comma-separated substrings matched against full paths without regard to case; matching files and directory subtrees stay untouched |
 | `LOG` | `debug` | `trace`, `debug`, `info`, `warn`, `error`, `fatal`, or `panic` |
+| `PASSWORDS` | empty | Comma-separated archive passwords for extract mode; spaces are preserved and passwords are never logged |
 
 Empty list entries are ignored. Invalid configuration or unreadable directories
 cause an error before planned edits begin. `DO_REMOVE` and `DEDUP` have been
@@ -86,6 +88,43 @@ case; distinct source files in case-sensitive directories are all processed.
 For example, flatten turns `ROOT/album/disc1/photo.jpg` into
 `ROOT/album/photo.jpg`, keeping `album` separate from other child folders.
 
+`MODE=Extract` recursively finds eligible archives in each configured root and
+extracts each into a sibling folder named after the archive, such as
+`album.ZIP` into `album/`. Existing folders and files are preserved by choosing
+`album (1)/`, `album (2)/`, and so on. It does not rename unrelated files,
+deduplicate, flatten, or run empty-directory cleanup. Newly extracted archives
+are processed on the next run, rather than recursively unpacked in the same run.
+
+Recognized suffixes are `.zip`, `.rar`, `.7z`, `.wim`, `.tar`, `.gz`, `.bz2`,
+`.xz`, `.zst`, `.lzma`, `.tar.gz`, `.tar.bz2`, `.tar.xz`, `.tar.zst`,
+`.tar.lzma`, `.tgz`, `.tbz2`, `.txz`, and `.tzst`, without regard to case.
+Compound tar archives unpack both layers. Other extensions are skipped.
+`MIN_SIZE`, `EXCLUDE_EXT`, and `IGNORE_KEYWORDS` select the input archives;
+they do not discard individual members from a selected archive. Extensions
+can exclude either `.gz` or `.tar.gz` for a tar/gzip input.
+
+Extraction uses a private snapshot, requires warning-free archive validation,
+verifies the written files, publishes the output without overwriting, and only
+then removes the verified original archive. Wrong passwords, corrupt data,
+unsafe paths, ambiguous names, links, special files, duplicate member paths,
+and unsupported extra attributes produce an error with the original retained.
+Split/multipart archives are not assembled automatically. Earlier completed
+archives remain extracted if a later archive fails. No filenames are shortened.
+
+On Linux, extracted files keep the archive's owner and group. Output access is
+based on the archive's read/write permissions, with owner access and directory
+traversal added; privileged archive permission bits and inherited ACLs are not
+applied. Insufficient ownership permissions fail with the original intact.
+Local extraction requires `7zz` or `7z`; other modes and extract dry runs do
+not require it. Docker includes the full upstream 7-Zip 26.05 static binary,
+including RAR support, with verified SHA-256 downloads for amd64 and arm64.
+
+```sh
+docker run --rm --mount type=bind,src=/path/to/files,dst=/dedup \
+  -e MODE=Extract -e ROOTS=/dedup -e DRY_RUN=false \
+  meinya/dedup:latest
+```
+
 Moves never overwrite an existing path. The app skips symbolic links, checks
 source identities and modification times, and rechecks duplicate contents
 before deletion. A detected change or I/O failure stops processing and returns
@@ -104,7 +143,8 @@ an unsupported-operation error instead of using unguarded destructive operations
 
 The command handles `SIGTERM` (including `docker stop`) and interrupt signals by
 canceling long reads and restoring staged files before exiting. Forced termination
-or a machine crash can leave a `.dedup-source-*` or `.dedup-copy-*` recovery folder.
+or a machine crash can leave a `.dedup-source-*`, `.dedup-copy-*`, or
+`.dedup-extract-*` recovery folder.
 These folder prefixes are reserved: a later run stops and reports the recovery
 path. Inspect and restore its files before retrying; do not delete recovery folders
 without checking their contents. Give the container enough stop time for filesystem
@@ -124,10 +164,12 @@ docker build -t dedup .
 on every branch push, pull request, and manual dispatch. It checks the Go code on
 Linux and Windows, validates the workflow and shell scripts, verifies that build
 helper failures are reported, builds the `linux/amd64` container,
-and tests all three modes, dry-run behavior, shared filters, and collisions
+and tests all four modes, dry-run behavior, shared filters, and collisions
 against disposable sample files as root and a normal user. Linux checks also
 exercise real mount points, bind aliases, cross-filesystem ownership, inherited
 ACLs, read-only volumes, and graceful signal handling.
+Archive tests cover ZIP, RAR, 7z, WIM, gzip and tar, compound archives, password
+retries, corrupt inputs, path traversal, destination collisions, and dry runs.
 
 After the checks pass, pushes and manual runs publish the tested image to
 `meinya/dedup:<7-character-commit>`. The current default-branch commit also

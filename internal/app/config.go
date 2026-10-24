@@ -14,6 +14,7 @@ const (
 	ModeDedup                = "dedup"
 	ModeDeleteFilesIncluding = "delete-files-including"
 	ModeFlatten              = "flatten"
+	ModeExtract              = "extract"
 )
 
 type Config struct {
@@ -26,6 +27,7 @@ type Config struct {
 	ExcludeExt           []string
 	DeleteFilesIncluding []string
 	IgnoreKeywords       []string
+	Passwords            []string
 }
 
 func loadConfig() (Config, error) {
@@ -35,7 +37,10 @@ func loadConfig() (Config, error) {
 		}
 		return fallback
 	}
-	root, set := os.LookupEnv("ROOT")
+	root, set := os.LookupEnv("ROOTS")
+	if !set {
+		root, set = os.LookupEnv("ROOT")
+	}
 	if !set {
 		root = "/dedup"
 	}
@@ -44,6 +49,7 @@ func loadConfig() (Config, error) {
 		ExcludeExt:           strings.Split(os.Getenv("EXCLUDE_EXT"), ","),
 		IgnoreKeywords:       strings.Split(os.Getenv("IGNORE_KEYWORDS"), ","),
 		DeleteFilesIncluding: strings.Split(os.Getenv("DELETE_FILES_INCLUDING"), ","),
+		Passwords:            strings.Split(os.Getenv("PASSWORDS"), ","),
 	}
 	var err error
 	config.DryRun, err = strconv.ParseBool(value("DRY_RUN", "true"))
@@ -72,11 +78,11 @@ func cleanList(values []string) []string {
 }
 
 func (c Config) normalized() (Config, error) {
-	c.Mode = strings.TrimSpace(c.Mode)
+	c.Mode = strings.ToLower(strings.TrimSpace(c.Mode))
 	switch c.Mode {
-	case ModeDedup, ModeDeleteFilesIncluding, ModeFlatten:
+	case ModeDedup, ModeDeleteFilesIncluding, ModeFlatten, ModeExtract:
 	default:
-		return Config{}, fmt.Errorf("invalid MODE %q: use dedup, delete-files-including, or flatten", c.Mode)
+		return Config{}, fmt.Errorf("invalid MODE %q: use dedup, delete-files-including, flatten, or extract", c.Mode)
 	}
 	if c.MinSize < 0 {
 		return Config{}, fmt.Errorf("MIN_SIZE must be nonnegative")
@@ -89,7 +95,7 @@ func (c Config) normalized() (Config, error) {
 	c.DeleteFilesIncluding = cleanList(c.DeleteFilesIncluding)
 	c.IgnoreKeywords = cleanList(c.IgnoreKeywords)
 	if len(c.Roots) == 0 {
-		return Config{}, fmt.Errorf("ROOT must contain at least one directory")
+		return Config{}, fmt.Errorf("ROOTS must contain at least one directory")
 	}
 	// Reject missing, symbolic-link and overlapping roots before planning edits.
 	var rootAncestors [][]os.FileInfo
@@ -125,7 +131,7 @@ func (c Config) normalized() (Config, error) {
 		c.Roots[i] = absolute
 		for j, previous := range rootAncestors {
 			if hasDirectoryIdentity(ancestors, previous[0]) || hasDirectoryIdentity(previous, info) {
-				return Config{}, fmt.Errorf("ROOT directories overlap: %q and %q", c.Roots[j], absolute)
+				return Config{}, fmt.Errorf("ROOTS directories overlap: %q and %q", c.Roots[j], absolute)
 			}
 		}
 		rootAncestors = append(rootAncestors, ancestors)
