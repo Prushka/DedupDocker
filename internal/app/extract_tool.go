@@ -200,15 +200,16 @@ func parseArchiveListing(listing string) ([]archiveMember, error) {
 			return nil, fmt.Errorf("archive root entry must be a directory")
 		}
 		size := int64(0)
-		if !directory {
-			value, ok := fields["Size"]
-			if !ok {
-				return nil, fmt.Errorf("archive entry has no size: %q", relative)
-			}
+		if value, ok := fields["Size"]; ok && value != "" {
 			size, err = strconv.ParseInt(value, 10, 64)
 			if err != nil || size < 0 {
 				return nil, fmt.Errorf("invalid archive entry size: %q", relative)
 			}
+		} else if !directory {
+			return nil, fmt.Errorf("archive entry has no size: %q", relative)
+		}
+		if directory && size != 0 {
+			return nil, fmt.Errorf("archive directory contains payload that cannot be preserved: %q", relative)
 		}
 		var modified time.Time
 		if value := fields["Modified"]; value != "" {
@@ -276,7 +277,19 @@ func parseArchiveModified(value string, zone *time.Location, local bool) (time.T
 }
 
 func safeArchivePath(name string) (string, error) {
-	name = strings.ReplaceAll(name, "\\", "/")
+	return validateArchivePath(strings.ReplaceAll(name, "\\", "/"))
+}
+
+func safeNativeArchivePath(name string) (string, error) {
+	// TAR and gzip names use POSIX separators. A backslash is a literal byte
+	// on Unix, and is unrepresentable as a filename byte on Windows.
+	if runtime.GOOS == "windows" && strings.Contains(name, "\\") {
+		return "", fmt.Errorf("native archive filename contains a literal backslash unsupported on Windows")
+	}
+	return validateArchivePath(name)
+}
+
+func validateArchivePath(name string) (string, error) {
 	if name == "" || strings.HasPrefix(name, "/") || strings.Contains(name, ":") {
 		return "", fmt.Errorf("unsafe archive path: %q", name)
 	}

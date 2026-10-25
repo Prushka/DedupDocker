@@ -25,6 +25,20 @@ func detectArchiveExt(name string) string {
 	return ""
 }
 
+func archiveStreamFormat(extension string) string {
+	switch extension {
+	case ".bz2", ".tar.bz2", ".tbz2":
+		return "bzip2"
+	case ".xz", ".tar.xz", ".txz":
+		return "xz"
+	case ".zst", ".tar.zst", ".tzst":
+		return "zstd"
+	case ".lzma", ".tar.lzma":
+		return "lzma"
+	}
+	return ""
+}
+
 func archiveFolderName(base string, suffix int) string {
 	if base == "" || base == "." || base == ".." {
 		base = "_"
@@ -131,6 +145,10 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 	if err != nil || !equal {
 		return errors.Join(err, fmt.Errorf("archive changed while taking a snapshot"))
 	}
+	extension := detectArchiveExt(source.path)
+	// Single-stream decoders have no member inventory. Force their format so
+	// an unrelated archive cannot be concatenated into a single output file.
+	tool.format = archiveStreamFormat(extension)
 	password, err := tool.password(ctx, snapshot.path, passwords)
 	if err != nil {
 		return err
@@ -144,7 +162,6 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 	}
 	defer func() { resultErr = errors.Join(resultErr, outputRoot.Close()) }()
 	archive := snapshot.path
-	extension := detectArchiveExt(source.path)
 	if strings.HasPrefix(extension, ".tar.") || extension == ".tgz" || extension == ".tbz2" || extension == ".txz" || extension == ".tzst" {
 		if err := stageRoot.Mkdir("decompressed", 0700); err != nil {
 			return err
@@ -155,12 +172,12 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 		}
 		var files map[string]extractedFile
 		var unpackErr error
+		fallback := filepath.Base(source.path)
+		fallback = fallback[:len(fallback)-len(extension)] + ".tar"
 		if extension == ".tar.gz" || extension == ".tgz" {
-			fallback := filepath.Base(source.path)
-			fallback = fallback[:len(fallback)-len(extension)] + ".tar"
 			files, unpackErr = unpackGzip(ctx, archive, intermediate, fallback)
 		} else {
-			files, unpackErr = tool.unpack(ctx, archive, password, intermediate)
+			files, unpackErr = tool.unpackSingleStream(ctx, archive, password, intermediate, fallback)
 		}
 		closeErr := intermediate.Close()
 		if err := errors.Join(unpackErr, closeErr); err != nil {
@@ -184,6 +201,9 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 	} else if extension == ".gz" {
 		base := filepath.Base(source.path)
 		files, err = unpackGzip(ctx, archive, outputRoot, base[:len(base)-len(extension)])
+	} else if tool.format != "" {
+		base := filepath.Base(source.path)
+		files, err = tool.unpackSingleStream(ctx, archive, password, outputRoot, base[:len(base)-len(extension)])
 	} else {
 		files, err = tool.unpack(ctx, archive, password, outputRoot)
 	}

@@ -14,8 +14,9 @@ import (
 )
 
 type extractedFile struct {
-	size   int64
-	digest string
+	size      int64
+	digest    string
+	directory bool
 }
 
 func archiveOutputMode(source os.FileInfo, directory bool) os.FileMode {
@@ -85,6 +86,34 @@ func writeArchiveMember(root *os.Root, member archiveMember, input io.Reader) (r
 	return extractedFile{size: written, digest: fmt.Sprintf("%x", hash.Sum(nil))}, nil
 }
 
+func (tool archiveTool) unpackSingleStream(ctx context.Context, archive, password string, root *os.Root, name string) (files map[string]extractedFile, resultErr error) {
+	relative, err := safeNativeArchivePath(name)
+	if err != nil || relative == "." {
+		return nil, errors.Join(err, fmt.Errorf("invalid compressed stream output filename"))
+	}
+	output, err := root.OpenFile(relative, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { resultErr = errors.Join(resultErr, output.Close()) }()
+	hash := sha256.New()
+	var written int64
+	err = tool.stream(ctx, archive, password, func(input io.Reader) error {
+		var copyErr error
+		// These formats may omit both the output name and uncompressed size.
+		// Read through verified EOF and require a clean decoder exit instead.
+		written, copyErr = io.Copy(io.MultiWriter(output, hash), input)
+		return copyErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := output.Sync(); err != nil {
+		return nil, err
+	}
+	return map[string]extractedFile{relative: {size: written, digest: fmt.Sprintf("%x", hash.Sum(nil))}}, nil
+}
+
 func (tool archiveTool) unpack(ctx context.Context, archive, password string, root *os.Root) (map[string]extractedFile, error) {
 	members, err := tool.list(ctx, archive, password)
 	if err != nil {
@@ -100,6 +129,7 @@ func (tool archiveTool) unpack(ctx context.Context, archive, password string, ro
 			if err := root.MkdirAll(member.relative, 0755); err != nil {
 				return nil, err
 			}
+			files[member.relative] = extractedFile{directory: true}
 		} else if member.size != 0 && len(member.crc) != 8 {
 			batch = false
 		}
@@ -157,27 +187,38 @@ func setExtractedOwnership(root *os.Root, source os.FileInfo) error {
 }
 
 func verifyExtractedTree(ctx context.Context, root *os.Root, expected map[string]extractedFile) error {
+	expected, err := completeExtractedManifest(expected)
+	if err != nil {
+		return err
+	}
 	seen := make(map[string]bool)
-	err := fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, walkErr error) error {
+	err = fs.WalkDir(root.FS(), ".", func(name string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		record, ok := expected[name]
+		if !ok {
+			return fmt.Errorf("unexpected extracted path: %q", name)
+		}
 		info, err := root.Lstat(name)
 		if err != nil {
 			return err
 		}
 		if info.IsDir() {
+			if !record.directory {
+				return fmt.Errorf("extracted file became a directory: %q", name)
+			}
+			seen[name] = true
 			file, err := root.Open(name)
 			if err != nil {
 				return err
 			}
 			return errors.Join(syncArchiveDirectory(file), file.Close())
 		}
-		record, ok := expected[name]
-		if !ok || !info.Mode().IsRegular() || info.Size() != record.size {
+		if record.directory || !info.Mode().IsRegular() || info.Size() != record.size {
 			return fmt.Errorf("extracted tree changed at %q", name)
 		}
 		file, err := root.Open(name)
@@ -199,7 +240,27 @@ func verifyExtractedTree(ctx context.Context, root *os.Root, expected map[string
 		return err
 	}
 	if len(seen) != len(expected) {
-		return fmt.Errorf("extracted files are missing; original archive retained")
+		return fmt.Errorf("extracted files or directories are missing; original archive retained")
 	}
 	return nil
+}
+
+func completeExtractedManifest(entries map[string]extractedFile) (map[string]extractedFile, error) {
+	complete := make(map[string]extractedFile, len(entries)+1)
+	for name, entry := range entries {
+		complete[name] = entry
+	}
+	if root, ok := complete["."]; ok && !root.directory {
+		return nil, fmt.Errorf("extracted root must be a directory")
+	}
+	complete["."] = extractedFile{directory: true}
+	for name := range entries {
+		for parent := path.Dir(name); parent != "."; parent = path.Dir(parent) {
+			if existing, ok := complete[parent]; ok && !existing.directory {
+				return nil, fmt.Errorf("extracted parent is a file: %q", parent)
+			}
+			complete[parent] = extractedFile{directory: true}
+		}
+	}
+	return complete, nil
 }

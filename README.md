@@ -100,19 +100,26 @@ are processed on the next run, rather than recursively unpacked in the same run.
 Recognized suffixes are `.zip`, `.rar`, `.7z`, `.wim`, `.tar`, `.gz`, `.bz2`,
 `.xz`, `.zst`, `.lzma`, `.tar.gz`, `.tar.bz2`, `.tar.xz`, `.tar.zst`,
 `.tar.lzma`, `.tgz`, `.tbz2`, `.txz`, and `.tzst`, without regard to case.
-Compound tar archives unpack both layers. Other extensions are skipped.
+Compound tar archives unpack both layers. Single compressed streams without an
+embedded filename use the archive name with its compression suffix removed.
+Other extensions are skipped.
 `MIN_SIZE`, `EXCLUDE_EXT`, and `IGNORE_KEYWORDS` select the input archives;
 they do not discard individual members from a selected archive. Extensions
 can exclude either `.gz` or `.tar.gz` for a tar/gzip input.
 
 Extraction uses a private snapshot, requires warning-free archive validation,
-verifies the written files, publishes the output without overwriting, and only
-then removes the verified original archive. File modification dates are preserved
+verifies all written files and directories, publishes the output without
+overwriting, and only then removes the verified original archive. File modification dates are preserved
 when recorded; unrepresentable or ambiguous timestamps retain the original.
 Wrong passwords, corrupt data,
 unsafe paths, ambiguous names, links, special files, duplicate member paths,
 and unsupported extra attributes or archived security descriptors produce an
 error with the original retained.
+Directory entries containing payload bytes are refused. Descriptive PAX global
+headers, including Git archive comments, are supported; globals that change paths,
+sizes, modification dates or extra attributes retain the original with an error.
+Literal backslashes in native tar/gzip filenames are preserved on Linux and
+refused on Windows, where they cannot be represented as filename characters.
 Split/multipart archives are not assembled automatically. Earlier completed
 archives remain extracted if a later archive fails. No filenames are shortened.
 
@@ -173,7 +180,8 @@ and tests all four modes, dry-run behavior, shared filters, and collisions
 against disposable sample files as root and a normal user. Linux checks also
 exercise real mount points, bind aliases, cross-filesystem ownership, inherited
 ACLs, read-only volumes, and graceful signal handling.
-Archive tests cover ZIP, RAR, 7z, WIM, gzip and tar, compound archives, password
+Archive tests cover ZIP, RAR, 7z, WIM, gzip, tar, bzip2, xz, zstd and LZMA,
+compound archives, empty directories, PAX comments, literal filenames, password
 retries, corrupt inputs, path traversal, destination collisions, and dry runs.
 
 After the checks pass, pushes and manual runs publish the tested image to

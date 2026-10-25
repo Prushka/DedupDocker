@@ -28,7 +28,7 @@ func unpackGzip(ctx context.Context, archive string, root *os.Root, fallback str
 	if name == "" {
 		name = fallback
 	}
-	relative, err := safeArchivePath(name)
+	relative, err := safeNativeArchivePath(name)
 	if err != nil || relative == "." {
 		return nil, errors.Join(err, fmt.Errorf("invalid gzip output filename"))
 	}
@@ -93,6 +93,19 @@ func unpackTar(ctx context.Context, archive string, root *os.Root) (files map[st
 		if err != nil {
 			return nil, err
 		}
+		if header.Typeflag == tar.TypeXGlobalHeader {
+			// Go's tar.Reader returns global headers without applying them to
+			// subsequent entries. Only accept descriptive fields that do not
+			// change paths, stream boundaries, modification dates or attributes.
+			for key := range header.PAXRecords {
+				switch key {
+				case "comment", "charset", "uid", "gid", "uname", "gname", "atime", "ctime":
+				default:
+					return nil, fmt.Errorf("tar contains unsupported global metadata: %q", key)
+				}
+			}
+			continue
+		}
 		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeDir {
 			return nil, fmt.Errorf("tar contains a link or unsupported special entry")
 		}
@@ -104,7 +117,7 @@ func unpackTar(ctx context.Context, archive string, root *os.Root) (files map[st
 				return nil, fmt.Errorf("tar contains additional permissions or attributes")
 			}
 		}
-		relative, err := safeArchivePath(header.Name)
+		relative, err := safeNativeArchivePath(header.Name)
 		if err != nil {
 			return nil, err
 		}
@@ -118,9 +131,13 @@ func unpackTar(ctx context.Context, archive string, root *os.Root) (files map[st
 		}
 		kinds[key] = directory
 		if directory {
+			if header.Size != 0 {
+				return nil, fmt.Errorf("tar directory contains payload that cannot be preserved")
+			}
 			if err := root.MkdirAll(relative, 0755); err != nil {
 				return nil, err
 			}
+			files[relative] = extractedFile{directory: true}
 			continue
 		}
 		record, err := writeArchiveMember(root, archiveMember{relative: relative, size: header.Size}, reader)
