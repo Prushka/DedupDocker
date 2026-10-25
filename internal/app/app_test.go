@@ -433,14 +433,14 @@ func TestMultipleRootsKeepDedupAndCountersSeparate(t *testing.T) {
 	for _, root := range []string{first, second} {
 		assertLayout(t, root, map[string]string{"longer-name": "same"})
 	}
-	if !strings.Contains(output.String(), "2 files deleted (8 bytes)") {
+	if !strings.Contains(output.String(), "2 files deleted (8 B)") {
 		t.Fatalf("incorrect totals: %s", output.String())
 	}
 	output.Reset()
 	if err := run(config, &output); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "0 files deleted (0 bytes)") {
+	if !strings.Contains(output.String(), "0 files deleted (0 B)") {
 		t.Fatal("counters leaked across runs")
 	}
 }

@@ -361,9 +361,9 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 		}
 	}
 	if dryRun {
-		logger.Infof("Dry run: would delete %d files (%d bytes), move %d files, remove %d empty directories, and extract %d archives", deleted, bytesDeleted, moved, directories, extracted)
+		logger.Infof("Dry run: would delete %d files (%s), move %d files, remove %d empty directories, and extract %d archives", deleted, formatBytes(bytesDeleted), moved, directories, extracted)
 	} else {
-		logger.Infof("%d files deleted (%d bytes), %d files moved, %d empty directories removed, %d archives extracted", deleted, bytesDeleted, moved, directories, extracted)
+		logger.Infof("%d files deleted (%s), %d files moved, %d empty directories removed, %d archives extracted", deleted, formatBytes(bytesDeleted), moved, directories, extracted)
 	}
 	return nil
 }

@@ -5,6 +5,9 @@ flattening, and archive extraction modes. `DRY_RUN` defaults to `true`: the app 
 without creating, moving, renaming, or deleting files or directories. Set
 `DRY_RUN=false` to apply the selected mode.
 
+Size totals in both previews and completed runs use B, KB, MB, GB or TB, with
+1 KB = 1,000 bytes and two decimal places for KB and larger units.
+
 ## Project layout
 
 ```text
