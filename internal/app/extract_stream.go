@@ -77,7 +77,7 @@ func writeArchiveMember(root *os.Root, member archiveMember, input io.Reader) (r
 	}
 	if !member.modified.IsZero() {
 		if err := setFileTimes(file, member.modified); err != nil {
-			return record, err
+			return record, fmt.Errorf("preserve modification time of %q: %w", member.relative, err)
 		}
 	}
 	if err := errors.Join(file.Chmod(0644), file.Sync()); err != nil {

@@ -132,7 +132,7 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 	}
 	snapshot, err := snapshotArchive(source, stageRoot, "input/"+filepath.Base(source.path))
 	if err != nil {
-		return err
+		return fmt.Errorf("snapshot archive: %w", err)
 	}
 	equal, err := sameContents(source, snapshot)
 	if err != nil || !equal {
@@ -144,7 +144,7 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 	tool.format = archiveStreamFormat(extension)
 	password, err := tool.password(ctx, snapshot.path, passwords)
 	if err != nil {
-		return err
+		return fmt.Errorf("validate archive: %w", err)
 	}
 	if err := stageRoot.Mkdir("out", 0700); err != nil {
 		return err
@@ -201,19 +201,19 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 		files, err = tool.unpack(ctx, archive, password, outputRoot)
 	}
 	if err != nil {
-		return err
+		return fmt.Errorf("unpack archive: %w", err)
 	}
 	if err := setExtractedOwnership(outputRoot, source.info); err != nil {
-		return err
+		return fmt.Errorf("set extracted ownership and permissions: %w", err)
 	}
 	if err := verifyExtractedTree(ctx, outputRoot, files); err != nil {
-		return err
+		return fmt.Errorf("verify staged extraction: %w", err)
 	}
 	// Capture the original only for the short publication/removal phase. Long
 	// decompression and password attempts leave the original name untouched.
 	original, err := captureFile(source, false, true)
 	if err != nil {
-		return err
+		return fmt.Errorf("capture original archive for removal: %w", err)
 	}
 	defer func() { resultErr = errors.Join(resultErr, original.close()) }()
 	equal, err = sameContents(original.record(), snapshot)
@@ -226,7 +226,7 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 	}
 	output := &fileRecord{path: filepath.Join(stage, "out"), info: outputInfo}
 	if err := publishArchiveDirectory(output, destination, parentInfo); err != nil {
-		return err
+		return fmt.Errorf("publish extracted directory: %w", err)
 	}
 	// The held root still refers to the published directory, even if its name
 	// is moved. Verify both its identity and all output bytes before deletion.
@@ -235,13 +235,16 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 		return errors.Join(err, fmt.Errorf("extraction destination changed before archive removal"))
 	}
 	if err := verifyExtractedTree(ctx, outputRoot, files); err != nil {
-		return err
+		return fmt.Errorf("verify published extraction: %w", err)
 	}
 	if err := syncArchiveParent(destination); err != nil {
-		return err
+		return fmt.Errorf("sync extraction parent directory: %w", err)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	return original.remove()
+	if err := original.remove(); err != nil {
+		return fmt.Errorf("remove verified original archive: %w", err)
+	}
+	return nil
 }

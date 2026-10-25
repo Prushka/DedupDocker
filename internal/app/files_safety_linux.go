@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+	"unsafe"
 
 	"golang.org/x/sys/unix"
 )
@@ -25,8 +26,26 @@ func openRegular(path string) (*os.File, error) {
 }
 
 func setFileTimes(file *os.File, stamp time.Time) error {
-	times := []unix.Timespec{unix.NsecToTimespec(stamp.UnixNano()), unix.NsecToTimespec(stamp.UnixNano())}
-	return unix.UtimesNanoAt(int(file.Fd()), "", times, unix.AT_EMPTY_PATH)
+	times := [2]unix.Timespec{unix.NsecToTimespec(stamp.UnixNano()), unix.NsecToTimespec(stamp.UnixNano())}
+	connection, err := file.SyscallConn()
+	if err != nil {
+		return err
+	}
+	var timestampErr error
+	err = connection.Control(func(fd uintptr) {
+		// The NULL-path form is Linux's futimens implementation, available
+		// since 2.6.22. An empty string with AT_EMPTY_PATH requires Linux 5.8
+		// and fails with EINVAL on older NAS kernels. Keep using the held file
+		// descriptor so a replaced pathname cannot redirect this update.
+		_, _, errno := unix.Syscall6(unix.SYS_UTIMENSAT, fd, 0, uintptr(unsafe.Pointer(&times[0])), 0, 0, 0)
+		if errno != 0 {
+			timestampErr = errno
+		}
+	})
+	if err := errors.Join(err, timestampErr); err != nil {
+		return &os.PathError{Op: "set file timestamps", Path: file.Name(), Err: err}
+	}
+	return nil
 }
 
 func crossDeviceError(err error) bool { return errors.Is(err, unix.EXDEV) }

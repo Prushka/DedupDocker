@@ -119,6 +119,8 @@ Extraction uses a private snapshot, requires warning-free archive validation,
 verifies all written files and directories, publishes the output without
 overwriting, and only then removes the verified original archive. File modification dates are preserved
 when recorded; unrepresentable or ambiguous timestamps retain the original.
+Linux timestamp updates use the held file descriptor and support older NAS
+kernels, including Linux 4.4, without relying on Linux 5.8's `AT_EMPTY_PATH` flag.
 Wrong passwords, corrupt data,
 unsafe paths, ambiguous names, links, special files, and duplicate member paths
 produce an error with the original retained.
@@ -190,6 +192,8 @@ ACLs, read-only volumes, and graceful signal handling.
 Archive tests cover ZIP, RAR, 7z, WIM, gzip, tar, bzip2, xz, zstd and LZMA,
 compound archives, empty directories, PAX comments, literal filenames, password
 retries, corrupt inputs, path traversal, destination collisions, and dry runs.
+Linux tests also reproduce older kernels rejecting `AT_EMPTY_PATH` and verify
+that extraction and copy-based moves still preserve timestamps and file contents.
 
 After the checks pass, pushes and manual runs publish the tested image to
 `meinya/dedup:<7-character-commit>`. The current default-branch commit also
