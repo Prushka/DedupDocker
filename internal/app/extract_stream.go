@@ -91,6 +91,11 @@ func (tool archiveTool) unpackSingleStream(ctx context.Context, archive, passwor
 	if err != nil || relative == "." {
 		return nil, errors.Join(err, fmt.Errorf("invalid compressed stream output filename"))
 	}
+	paths, err := planArchivePaths([]archiveMember{{relative: relative}})
+	if err != nil {
+		return nil, err
+	}
+	relative = paths[relative]
 	output, err := root.OpenFile(relative, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 	if err != nil {
 		return nil, err

@@ -130,7 +130,11 @@ sizes or modification dates retain the original with an error.
 Literal backslashes in native tar/gzip filenames are preserved on Linux and
 refused on Windows, where they cannot be represented as filename characters.
 Split/multipart archives are not assembled automatically. Earlier completed
-archives remain extracted if a later archive fails. No filenames are shortened.
+archives remain extracted if a later archive fails. Names longer than 255 UTF-8
+bytes are shortened to fit Linux filesystems, preserving file extensions where
+they fit. Numbered suffixes resolve collisions, existing shorter names keep their
+names, and directory hierarchies stay intact. Names within the limit are unchanged.
+WIM entries sharing stored data are extracted as separate normal files.
 
 On Linux, extracted files keep the archive's owner and group. Output access is
 based on the archive's read/write permissions, with owner access and directory
@@ -190,7 +194,7 @@ against disposable sample files as root and a normal user. Linux checks also
 exercise real mount points, bind aliases, cross-filesystem ownership, inherited
 ACLs, read-only volumes, and graceful signal handling.
 Archive tests cover ZIP, RAR, 7z, WIM, gzip, tar, bzip2, xz, zstd and LZMA,
-compound archives, empty directories, PAX comments, literal filenames, password
+compound archives, empty directories, PAX comments, literal and long Unicode filenames, password
 retries, corrupt inputs, path traversal, destination collisions, and dry runs.
 Linux tests also reproduce older kernels rejecting `AT_EMPTY_PATH` and verify
 that extraction and copy-based moves still preserve timestamps and file contents.

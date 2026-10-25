@@ -185,8 +185,13 @@ func parseArchiveListing(listing string) ([]archiveMember, error) {
 			}
 		}
 		for key, value := range fields {
-			if key == "Links" && (value == "1" || value == "0") {
-				continue
+			if key == "Links" {
+				// WIM reports data-resource reference counts here, including for
+				// independent files with identical bytes. Each named file is still
+				// streamed and verified separately; this is not a link target.
+				if _, err := strconv.ParseUint(value, 10, 64); err == nil {
+					continue
+				}
 			}
 			if value != "" && value != "-" && (strings.Contains(strings.ToLower(key), "link") || strings.Contains(strings.ToLower(key), "reparse") || key == "Anti") {
 				return nil, fmt.Errorf("archive contains unsupported links, reparse points, or anti-items: %q", relative)
@@ -239,6 +244,13 @@ func parseArchiveListing(listing string) ([]archiveMember, error) {
 				return nil, fmt.Errorf("archive path is both a file and a parent directory: %q", parent)
 			}
 		}
+	}
+	paths, err := planArchivePaths(members)
+	if err != nil {
+		return nil, err
+	}
+	for index := range members {
+		members[index].relative = paths[members[index].relative]
 	}
 	return members, nil
 }
@@ -303,7 +315,7 @@ func validateArchivePath(name string) (string, error) {
 		return ".", nil
 	}
 	for _, component := range strings.Split(name, "/") {
-		if component == "" || component == "." || component == ".." || len(component) > 255 {
+		if component == "" || component == "." || component == ".." {
 			return "", fmt.Errorf("unsafe archive path component: %q", component)
 		}
 		if strings.TrimRight(component, " .") != component {
@@ -325,7 +337,7 @@ func (tool archiveTool) verifySelectors(ctx context.Context, archive, password s
 		}
 		matched := false
 		for _, actual := range selected {
-			if actual.relative == expected.relative && actual.directory == expected.directory && actual.size == expected.size {
+			if actual.name == expected.name && actual.directory == expected.directory && actual.size == expected.size {
 				matched = true
 			}
 		}
