@@ -41,17 +41,27 @@ func preserveCopyMetadata(file *os.File, source os.FileInfo) error {
 			return fmt.Errorf("preserve file ownership: %w", err)
 		}
 	}
-	// New files can inherit destination ACLs. Refuse those rather than publish
-	// permissions or associated data that differ from the source.
-	supported, err := contentSupportedHandle(file)
-	if err != nil {
+	if err := clearInheritedACL(file, false); err != nil {
 		return err
-	}
-	if !supported {
-		return fmt.Errorf("destination inherited additional attributes that prevent copying")
 	}
 	// chown can clear set-ID bits, so apply the mode after ownership.
 	return file.Chmod(source.Mode())
+}
+
+func clearInheritedACL(file *os.File, directory bool) error {
+	// Normalize newly created output permissions without inspecting or rejecting
+	// any source attributes. A default ACL must not grant additional access to
+	// copied data whose normal permission bits would otherwise keep it private.
+	attributes := []string{"system.posix_acl_access"}
+	if directory {
+		attributes = append(attributes, "system.posix_acl_default")
+	}
+	for _, attribute := range attributes {
+		if err := unix.Fremovexattr(int(file.Fd()), attribute); err != nil && !errors.Is(err, unix.ENODATA) && !errors.Is(err, unix.ENOTSUP) {
+			return fmt.Errorf("cannot remove inherited output ACL: %w", err)
+		}
+	}
+	return nil
 }
 
 func removeEmptyDirectory(file *fileRecord) error {

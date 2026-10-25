@@ -106,13 +106,6 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	supported, err := plainContentSupported(source)
-	if err != nil {
-		return err
-	}
-	if !supported {
-		return fmt.Errorf("archive has additional attributes or streams that cannot be preserved")
-	}
 	stage, err := os.MkdirTemp(filepath.Dir(destination), ".dedup-extract-")
 	if err != nil {
 		return err
@@ -246,9 +239,6 @@ func extractArchive(ctx context.Context, source *fileRecord, destination string,
 	}
 	if err := syncArchiveParent(destination); err != nil {
 		return err
-	}
-	if supported, err := contentSupportedHandle(original.handle()); err != nil || !supported {
-		return errors.Join(err, fmt.Errorf("archive gained additional attributes or streams"))
 	}
 	if err := ctx.Err(); err != nil {
 		return err

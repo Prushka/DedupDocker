@@ -8,6 +8,11 @@ without creating, moving, renaming, or deleting files or directories. Set
 Size totals in both previews and completed runs use B, KB, MB, GB or TB, with
 1 KB = 1,000 bytes and two decimal places for KB and larger units.
 
+Extra filesystem attributes and NTFS named streams do not block any mode.
+Extraction and copy-based moves transfer normal file contents; extra attributes,
+named streams and archived ACL/security metadata are ignored and may be lost
+when the original is deleted. Native moves retain their existing metadata.
+
 ## Project layout
 
 ```text
@@ -115,12 +120,11 @@ verifies all written files and directories, publishes the output without
 overwriting, and only then removes the verified original archive. File modification dates are preserved
 when recorded; unrepresentable or ambiguous timestamps retain the original.
 Wrong passwords, corrupt data,
-unsafe paths, ambiguous names, links, special files, duplicate member paths,
-and unsupported extra attributes or archived security descriptors produce an
-error with the original retained.
+unsafe paths, ambiguous names, links, special files, and duplicate member paths
+produce an error with the original retained.
 Directory entries containing payload bytes are refused. Descriptive PAX global
 headers, including Git archive comments, are supported; globals that change paths,
-sizes, modification dates or extra attributes retain the original with an error.
+sizes or modification dates retain the original with an error.
 Literal backslashes in native tar/gzip filenames are preserved on Linux and
 refused on Windows, where they cannot be represented as filename characters.
 Split/multipart archives are not assembled automatically. Earlier completed
@@ -146,11 +150,11 @@ before deletion. A detected change or I/O failure stops processing and returns
 a nonzero exit status. Earlier completed edits remain; operations are not a
 transaction. Native moves preserve file attributes and additional streams.
 Copy-based moves preserve file permissions and modification time and verify the
-copied contents before removing the source. If a copy cannot preserve additional
-streams or extended attributes, it fails with the source intact.
-On Linux, copies also preserve the owner and group; insufficient permissions or
-inherited destination ACLs cause an error with the source intact. The destination
-file and its parent directory are synced before removing a copied source.
+copied contents before removing the source. Extra attributes and named streams
+are ignored rather than copied. On Linux, copies also preserve the owner and
+group and clear inherited output ACLs; insufficient permissions cause an error
+with the source intact. The destination file and its parent directory are synced
+before removing a copied source.
 Nested mount points remain in place when empty, and repeated directory identities
 through bind mounts are rejected before edits to prevent overlapping work or loops.
 The guarded file operations support Linux and Windows. Other platforms return

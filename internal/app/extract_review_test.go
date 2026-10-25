@@ -245,7 +245,7 @@ func TestExtractReviewPAXGlobalComment(t *testing.T) {
 }
 
 func TestExtractReviewUnsupportedPAXGlobals(t *testing.T) {
-	for _, key := range []string{"path", "size", "mtime", "SCHILY.xattr.user.test", "SCHILY.acl.access"} {
+	for _, key := range []string{"path", "linkpath", "size", "mtime", "GNU.sparse.size", "SCHILY.realsize"} {
 		t.Run(key, func(t *testing.T) {
 			var data bytes.Buffer
 			writer := tar.NewWriter(&data)
@@ -267,6 +267,46 @@ func TestExtractReviewUnsupportedPAXGlobals(t *testing.T) {
 			if _, err := unpackTar(context.Background(), archive, root); err == nil {
 				t.Fatal("ignored global metadata that changes extraction semantics")
 			}
+		})
+	}
+}
+
+func TestExtractIgnoresArchivedExtraAttributes(t *testing.T) {
+	requireArchiveTool(t)
+	for _, global := range []bool{false, true} {
+		t.Run(map[bool]string{false: "member", true: "global"}[global], func(t *testing.T) {
+			root := t.TempDir()
+			var data bytes.Buffer
+			writer := tar.NewWriter(&data)
+			metadata := map[string]string{
+				"SCHILY.xattr.user.test": "extra archived metadata",
+				"SCHILY.acl.access":      "user::rw-,group::r--,other::---",
+			}
+			if global {
+				if err := writer.WriteHeader(&tar.Header{Typeflag: tar.TypeXGlobalHeader, PAXRecords: metadata}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			header := &tar.Header{Name: "payload.txt", Mode: 0644, Size: 7}
+			if !global {
+				header.PAXRecords = metadata
+			}
+			if err := writer.WriteHeader(header); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := io.WriteString(writer, "payload"); err != nil {
+				t.Fatal(err)
+			}
+			if err := writer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "archive.tar"), data.Bytes(), 0640); err != nil {
+				t.Fatal(err)
+			}
+			if err := run(testConfig(root, ModeExtract), io.Discard); err != nil {
+				t.Fatal(err)
+			}
+			assertLayout(t, root, map[string]string{"archive/payload.txt": "payload"})
 		})
 	}
 }

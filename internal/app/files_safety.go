@@ -26,21 +26,6 @@ func validateCaptured(expected *fileRecord, actual os.FileInfo, identityOnly boo
 	return nil
 }
 
-// plainContentSupported protects operations that cannot preserve associated data
-// when copying or unpacking a source. Dedup compares the normal file bytes and
-// deliberately does not use this restriction.
-func plainContentSupported(file *fileRecord) (supported bool, resultErr error) {
-	if err := contextError(file.ctx); err != nil {
-		return false, err
-	}
-	handle, err := file.open()
-	if err != nil {
-		return false, err
-	}
-	defer func() { resultErr = errors.Join(resultErr, handle.Close()) }()
-	return contentSupportedHandle(handle)
-}
-
 func removeVerified(file *fileRecord) error {
 	return removeCaptured(file, false)
 }

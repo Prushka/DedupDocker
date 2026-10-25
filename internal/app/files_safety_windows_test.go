@@ -5,6 +5,7 @@ package app
 import (
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -81,18 +82,68 @@ func TestSafetyDedupIgnoresLateNamedStreams(t *testing.T) {
 	}
 }
 
-func TestSafetyCopyRefusesNamedStreams(t *testing.T) {
+func TestSafetyCopyIgnoresNamedStreams(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, map[string]string{"source": "main content"})
 	source, destination := filepath.Join(root, "source"), filepath.Join(root, "destination")
 	writeSafetyStream(t, source, "unique associated data")
-	if _, err := copyMove(recordFile(t, source), destination); err == nil {
-		t.Fatal("copy accepted additional streams")
+	if _, err := copyMove(recordFile(t, source), destination); err != nil {
+		t.Fatal(err)
 	}
-	assertLayout(t, root, map[string]string{"source": "main content"})
-	if actual, err := os.ReadFile(source + ":dedup-test"); err != nil || string(actual) != "unique associated data" {
-		t.Fatalf("source stream changed: %q, %v", actual, err)
+	assertLayout(t, root, map[string]string{"destination": "main content"})
+}
+
+func TestSafetyExtractIgnoresNamedStreams(t *testing.T) {
+	requireArchiveTool(t)
+	for _, late := range []bool{false, true} {
+		t.Run(map[bool]string{false: "existing", true: "after-planning"}[late], func(t *testing.T) {
+			root := t.TempDir()
+			archive := filepath.Join(root, "#158.zip")
+			writeArchiveZIP(t, archive, map[string]string{"payload.txt": "archive content"})
+			if !late {
+				writeSafetyStream(t, archive, "download metadata")
+			}
+			planned, err := buildPlan(testConfig(root, ModeExtract), testLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if late {
+				writeSafetyStream(t, archive, "download metadata")
+				stamp := planned.operations[0].file.info.ModTime()
+				if err := os.Chtimes(archive, stamp, stamp); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := planned.execute(true, testLogger()); err != nil {
+				t.Fatal(err)
+			}
+			if actual, err := os.ReadFile(archive + ":dedup-test"); err != nil || string(actual) != "download metadata" {
+				t.Fatalf("preview changed the archive stream: %q, %v", actual, err)
+			}
+			if err := planned.execute(false, testLogger()); err != nil {
+				t.Fatal(err)
+			}
+			assertLayout(t, root, map[string]string{"#158/payload.txt": "archive content"})
+		})
 	}
+}
+
+func TestSafetyExtractIgnoresArchivedStreamsAndSecurity(t *testing.T) {
+	tool := requireArchiveTool(t)
+	root, input := t.TempDir(), t.TempDir()
+	source := filepath.Join(input, "payload.txt")
+	writeFixture(t, input, map[string]string{"payload.txt": "normal archived content"})
+	writeSafetyStream(t, source, "archived stream metadata")
+	archive := filepath.Join(root, "archive.wim")
+	command := exec.Command(tool.executable, "a", "-twim", "-sns", "-sni", archive, "payload.txt")
+	command.Dir = input
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("create WIM with streams and security metadata: %v\n%s", err, output)
+	}
+	if err := run(testConfig(root, ModeExtract), io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	assertLayout(t, root, map[string]string{"archive/payload.txt": "normal archived content"})
 }
 
 func TestSafetyNativeMovePreservesStreamsAndReadOnlyHardlinks(t *testing.T) {

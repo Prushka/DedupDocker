@@ -24,17 +24,6 @@ func openRegular(path string) (*os.File, error) {
 	return os.NewFile(uintptr(fd), path), nil
 }
 
-func contentSupportedHandle(file *os.File) (bool, error) {
-	size, err := unix.Flistxattr(int(file.Fd()), nil)
-	if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.EOPNOTSUPP) {
-		return true, nil
-	}
-	if err != nil {
-		return false, fmt.Errorf("inspect extended attributes of %q: %w", file.Name(), err)
-	}
-	return size == 0, nil
-}
-
 func setFileTimes(file *os.File, stamp time.Time) error {
 	times := []unix.Timespec{unix.NsecToTimespec(stamp.UnixNano()), unix.NsecToTimespec(stamp.UnixNano())}
 	return unix.UtimesNanoAt(int(file.Fd()), "", times, unix.AT_EMPTY_PATH)

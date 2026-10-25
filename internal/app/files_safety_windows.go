@@ -3,14 +3,12 @@
 package app
 
 import (
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-	"unicode/utf16"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -58,53 +56,6 @@ func inspectFile(path string) (info os.FileInfo, resultErr error) {
 
 func openRegular(path string) (*os.File, error) {
 	return openWindowsHandle(path, windows.GENERIC_READ, windows.FILE_SHARE_READ|windows.FILE_SHARE_WRITE|windows.FILE_SHARE_DELETE)
-}
-
-func contentSupportedHandle(file *os.File) (bool, error) {
-	// FILE_STREAM_INFO contains an offset-linked list with a UTF-16 stream
-	// name at byte 24. Inspect the captured handle, never a mutable pathname.
-	for size := 1024; size <= 16*1024*1024; size *= 2 {
-		buffer := make([]byte, size)
-		err := windows.GetFileInformationByHandleEx(windows.Handle(file.Fd()), windows.FileStreamInfo, &buffer[0], uint32(len(buffer)))
-		if errors.Is(err, windows.ERROR_MORE_DATA) || errors.Is(err, windows.ERROR_INSUFFICIENT_BUFFER) {
-			continue
-		}
-		if errors.Is(err, windows.ERROR_HANDLE_EOF) {
-			return true, nil
-		}
-		if errors.Is(err, windows.ERROR_INVALID_PARAMETER) || errors.Is(err, windows.ERROR_NOT_SUPPORTED) || errors.Is(err, windows.ERROR_INVALID_FUNCTION) {
-			// Unknown stream semantics cannot safely be deduplicated or copied.
-			return false, nil
-		}
-		if err != nil {
-			return false, fmt.Errorf("inspect streams of %q: %w", file.Name(), err)
-		}
-		for offset := 0; ; {
-			if offset+24 > len(buffer) {
-				return false, fmt.Errorf("invalid stream information for %q", file.Name())
-			}
-			next := int(binary.LittleEndian.Uint32(buffer[offset:]))
-			length := int(binary.LittleEndian.Uint32(buffer[offset+4:]))
-			if length%2 != 0 || length > len(buffer)-offset-24 {
-				return false, fmt.Errorf("invalid stream name for %q", file.Name())
-			}
-			name := make([]uint16, length/2)
-			for index := range name {
-				name[index] = binary.LittleEndian.Uint16(buffer[offset+24+index*2:])
-			}
-			if string(utf16.Decode(name)) != "::$DATA" {
-				return false, nil
-			}
-			if next == 0 {
-				return true, nil
-			}
-			if next < 24+length || next > len(buffer)-offset-24 {
-				return false, fmt.Errorf("invalid stream list for %q", file.Name())
-			}
-			offset += next
-		}
-	}
-	return false, fmt.Errorf("stream information is too large for %q", file.Name())
 }
 
 func setFileTimes(file *os.File, stamp time.Time) error {

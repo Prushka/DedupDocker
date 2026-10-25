@@ -22,19 +22,46 @@ func writeSafetyAttribute(t *testing.T, path string) {
 	}
 }
 
-func TestSafetyLinuxCopyRefusesExtendedAttributes(t *testing.T) {
+func TestSafetyLinuxCopyIgnoresExtendedAttributes(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, map[string]string{"source": "main content"})
 	source, destination := filepath.Join(root, "source"), filepath.Join(root, "destination")
 	writeSafetyAttribute(t, source)
-	if _, err := copyMove(recordFile(t, source), destination); err == nil {
-		t.Fatal("copy accepted extended attributes it cannot preserve")
+	if _, err := copyMove(recordFile(t, source), destination); err != nil {
+		t.Fatal(err)
 	}
-	assertLayout(t, root, map[string]string{"source": "main content"})
-	buffer := make([]byte, 128)
-	size, err := unix.Getxattr(source, "user.dedup-test", buffer)
-	if err != nil || string(buffer[:size]) != "unique associated data" {
-		t.Fatalf("source extended attribute changed: %q, %v", buffer, err)
+	assertLayout(t, root, map[string]string{"destination": "main content"})
+}
+
+func TestSafetyLinuxExtractIgnoresExtendedAttributes(t *testing.T) {
+	requireArchiveTool(t)
+	for _, late := range []bool{false, true} {
+		t.Run(map[bool]string{false: "existing", true: "after-planning"}[late], func(t *testing.T) {
+			root := t.TempDir()
+			archive := filepath.Join(root, "#158.zip")
+			writeArchiveZIP(t, archive, map[string]string{"payload.txt": "archive content"})
+			if !late {
+				writeSafetyAttribute(t, archive)
+			}
+			planned, err := buildPlan(testConfig(root, ModeExtract), testLogger())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if late {
+				writeSafetyAttribute(t, archive)
+			}
+			before := snapshot(t, root)
+			if err := planned.execute(true, testLogger()); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(before, snapshot(t, root)) {
+				t.Fatal("dry run changed an archive with extended attributes")
+			}
+			if err := planned.execute(false, testLogger()); err != nil {
+				t.Fatal(err)
+			}
+			assertLayout(t, root, map[string]string{"#158/payload.txt": "archive content"})
+		})
 	}
 }
 

@@ -109,7 +109,7 @@ func sameContents(first, second *fileRecord) (equal bool, resultErr error) {
 }
 
 // Native no-replace renames preserve all file streams and metadata. Copying is
-// only needed across filesystems, and refuses metadata it cannot preserve.
+// only needed across filesystems and transfers the normal file contents.
 func moveNoReplace(source *fileRecord, destination string) (*fileRecord, error) {
 	if err := source.verify(); err != nil {
 		return nil, err
@@ -130,19 +130,11 @@ func moveNoReplace(source *fileRecord, destination string) (*fileRecord, error) 
 }
 
 func copyMove(source *fileRecord, destination string) (result *fileRecord, resultErr error) {
-	// Reject known collisions and unsupported source metadata before detaching
-	// the source or creating temporary files.
+	// Reject known collisions before detaching the source or creating temporary files.
 	if _, err := os.Lstat(destination); err == nil {
 		return nil, fmt.Errorf("destination already exists: %q", destination)
 	} else if !os.IsNotExist(err) {
 		return nil, err
-	}
-	supported, err := plainContentSupported(source)
-	if err != nil {
-		return nil, err
-	}
-	if !supported {
-		return nil, fmt.Errorf("additional file content or metadata prevents copying: %q", source.path)
 	}
 	captured, err := captureFile(source, false, true)
 	if err != nil {
@@ -150,9 +142,6 @@ func copyMove(source *fileRecord, destination string) (result *fileRecord, resul
 	}
 	defer func() { resultErr = errors.Join(resultErr, captured.close()) }()
 	input := captured.handle()
-	if supported, err := contentSupportedHandle(input); err != nil || !supported {
-		return nil, errors.Join(err, fmt.Errorf("additional file content or metadata prevents copying: %q", source.path))
-	}
 	// Publish only a completely written, verified file. A consumer cannot see
 	// and modify an incomplete destination while the copy is in progress.
 	temporaryDir, err := os.MkdirTemp(filepath.Dir(destination), ".dedup-copy-")
@@ -214,9 +203,6 @@ func copyMove(source *fileRecord, destination string) (result *fileRecord, resul
 	}
 	if !equal {
 		return nil, fmt.Errorf("source contents changed while copying %q", source.path)
-	}
-	if supported, err := contentSupportedHandle(input); err != nil || !supported {
-		return nil, errors.Join(err, fmt.Errorf("additional file content or metadata prevents copying: %q", source.path))
 	}
 	result, err = nativeMoveNoReplace(temporary, destination)
 	if err != nil {

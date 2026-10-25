@@ -66,7 +66,7 @@ func (buffer *limitedArchiveBuffer) Write(data []byte) (int, error) {
 }
 
 func (tool archiveTool) command(ctx context.Context, command, archive, password string, extra ...string) *exec.Cmd {
-	args := []string{command, "-y", "-bd", "-bb0", "-sccUTF-8", "-ssc", "-spd", "-r-"}
+	args := []string{command, "-y", "-bd", "-bb0", "-sccUTF-8", "-ssc", "-spd", "-r-", "-sns-"}
 	if password != "" {
 		args = append(args, "-p"+password)
 	}
@@ -179,9 +179,6 @@ func parseArchiveListing(listing string) ([]archiveMember, error) {
 		}
 		seen[key] = true
 		attributes := fields["Attributes"]
-		if fields["NT Security"] != "" {
-			return nil, fmt.Errorf("archive contains security descriptors that cannot be preserved: %q", relative)
-		}
 		for _, value := range strings.Fields(attributes) {
 			if len(value) >= 10 && strings.ContainsRune("lspbc", rune(value[0])) {
 				return nil, fmt.Errorf("archive contains a link or special file: %q", relative)
@@ -191,8 +188,8 @@ func parseArchiveListing(listing string) ([]archiveMember, error) {
 			if key == "Links" && (value == "1" || value == "0") {
 				continue
 			}
-			if value != "" && value != "-" && (strings.Contains(strings.ToLower(key), "link") || strings.Contains(strings.ToLower(key), "reparse") || key == "Alternate Stream" || key == "Alternate Streams" || key == "Anti") {
-				return nil, fmt.Errorf("archive contains unsupported links, streams, or anti-items: %q", relative)
+			if value != "" && value != "-" && (strings.Contains(strings.ToLower(key), "link") || strings.Contains(strings.ToLower(key), "reparse") || key == "Anti") {
+				return nil, fmt.Errorf("archive contains unsupported links, reparse points, or anti-items: %q", relative)
 			}
 		}
 		directory := fields["Folder"] == "+" || strings.HasPrefix(attributes, "D")

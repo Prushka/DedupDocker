@@ -12,15 +12,18 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func TestLinuxCopyRefusesInheritedDestinationACL(t *testing.T) {
+func TestLinuxCopyAllowsInheritedDestinationACL(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, map[string]string{"source": "private source data"}, "destination")
 	destination := filepath.Join(root, "destination")
 	writeDefaultSafetyACL(t, destination)
-	if _, err := copyMove(recordFile(t, filepath.Join(root, "source")), filepath.Join(destination, "file")); err == nil {
-		t.Fatal("published a copy with an inherited ACL")
+	if _, err := copyMove(recordFile(t, filepath.Join(root, "source")), filepath.Join(destination, "file")); err != nil {
+		t.Fatal(err)
 	}
-	assertLayout(t, root, map[string]string{"source": "private source data"}, "destination")
+	assertLayout(t, root, map[string]string{"destination/file": "private source data"})
+	if size, err := unix.Getxattr(filepath.Join(destination, "file"), "system.posix_acl_access", nil); size > 0 || err == nil {
+		t.Fatal("copied output retained an ACL granting additional access")
+	}
 }
 
 func writeDefaultSafetyACL(t *testing.T, directory string) {
@@ -93,6 +96,7 @@ func TestLinuxIntegrationFlattenAcrossMountPreservesOwnership(t *testing.T) {
 	mountAuditFixture(t, "tmpfs", mounted, "tmpfs", 0)
 	writeFixture(t, mounted, map[string]string{"file.txt": "owned file from another filesystem"})
 	source := filepath.Join(mounted, "file.txt")
+	writeSafetyAttribute(t, source)
 	if err := os.Chown(source, 12345, 12346); err != nil {
 		t.Fatal(err)
 	}
@@ -154,6 +158,7 @@ func TestLinuxIntegrationExtractPreservesOwnerAndPrivateAccess(t *testing.T) {
 	root := t.TempDir()
 	archive := filepath.Join(root, "private.ZIP")
 	writeArchiveZIP(t, archive, map[string]string{"payload.txt": "private extracted payload"})
+	writeSafetyAttribute(t, archive)
 	if err := os.Chown(archive, 12345, 12346); err != nil {
 		t.Fatal(err)
 	}

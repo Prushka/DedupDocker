@@ -41,6 +41,14 @@ for run_user in 0:0 "$(id -u):$(id -g)"; do
       mkdir UPPER
       printf "existing destination\n" > UPPER/existing.txt
     '
+  python3 - "$data" <<'PY'
+import os
+import sys
+
+for entry in os.scandir(sys.argv[1]):
+    if entry.is_file():
+        os.setxattr(entry.path, 'user.dedup-extract-regression', b'archive download metadata')
+PY
   before="$(snapshot "$data")"
   docker run --rm --network none --read-only --user "$run_user" \
     --mount "type=bind,src=$data,dst=/dedup,readonly" \
@@ -92,6 +100,12 @@ for run_user in 0:0 "$(id -u):$(id -g)"; do
     test "$(stat -c '%Y' "$data/$extracted")" = 1600000000
   done
   test -f "$data/protected.zip"
+  python3 - "$data/protected.zip" <<'PY'
+import os
+import sys
+
+assert os.getxattr(sys.argv[1], 'user.dedup-extract-regression') == b'archive download metadata'
+PY
   for archive in UPPER.ZIP encrypted.7z bundle.tar.gz bundle-xz.tar.xz bundle-bz2.tbz2 image.wim stream-xz.xz stream-bz2.bz2 stream-zstd.zst stream-lzma.lzma; do
     test ! -e "$data/$archive"
   done
@@ -109,4 +123,4 @@ if docker run --rm --network none --read-only \
   exit 1
 fi
 test "$before" = "$(snapshot "$data")"
-echo 'Extract passed dry-run, read-only volumes, passwords, compressed streams, compound archives, empty directories, WIM, collisions and corrupt archive preservation.'
+echo 'Extract passed extended attributes, dry-run, read-only volumes, passwords, compressed streams, compound archives, empty directories, WIM, collisions and corrupt archive preservation.'

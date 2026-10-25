@@ -28,14 +28,8 @@ func setArchiveOwnership(file *os.File, source os.FileInfo, directory bool) erro
 			return fmt.Errorf("cannot preserve archive ownership on output: %w", err)
 		}
 	}
-	attributes := []string{"system.posix_acl_access"}
-	if directory {
-		attributes = append(attributes, "system.posix_acl_default")
-	}
-	for _, attribute := range attributes {
-		if err := unix.Fremovexattr(int(file.Fd()), attribute); err != nil && !errors.Is(err, unix.ENODATA) && !errors.Is(err, unix.ENOTSUP) {
-			return fmt.Errorf("cannot remove inherited output ACL: %w", err)
-		}
+	if err := clearInheritedACL(file, directory); err != nil {
+		return err
 	}
 	return errors.Join(file.Chmod(archiveOutputMode(source, directory)), file.Sync())
 }

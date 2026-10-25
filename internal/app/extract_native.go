@@ -95,27 +95,21 @@ func unpackTar(ctx context.Context, archive string, root *os.Root) (files map[st
 		}
 		if header.Typeflag == tar.TypeXGlobalHeader {
 			// Go's tar.Reader returns global headers without applying them to
-			// subsequent entries. Only accept descriptive fields that do not
-			// change paths, stream boundaries, modification dates or attributes.
+			// subsequent entries. Ignore extra metadata, but refuse structural
+			// overrides that this reader cannot apply to subsequent file data.
 			for key := range header.PAXRecords {
 				switch key {
-				case "comment", "charset", "uid", "gid", "uname", "gname", "atime", "ctime":
-				default:
-					return nil, fmt.Errorf("tar contains unsupported global metadata: %q", key)
+				case "path", "linkpath", "size", "mtime", "SCHILY.realsize":
+					return nil, fmt.Errorf("tar contains unsupported global file override: %q", key)
+				}
+				if strings.HasPrefix(key, "GNU.sparse.") {
+					return nil, fmt.Errorf("tar contains unsupported global sparse-file layout: %q", key)
 				}
 			}
 			continue
 		}
 		if header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeDir {
 			return nil, fmt.Errorf("tar contains a link or unsupported special entry")
-		}
-		if len(header.Xattrs) != 0 {
-			return nil, fmt.Errorf("tar contains extended attributes that cannot be preserved")
-		}
-		for key := range header.PAXRecords {
-			if strings.Contains(strings.ToLower(key), "acl") || strings.Contains(strings.ToLower(key), "xattr") {
-				return nil, fmt.Errorf("tar contains additional permissions or attributes")
-			}
 		}
 		relative, err := safeNativeArchivePath(header.Name)
 		if err != nil {
