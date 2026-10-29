@@ -257,12 +257,16 @@ func (p *plan) verifyParents(root, path string) error {
 }
 
 func (p *plan) execute(dryRun bool, logger *log.Logger) error {
-	// Preflight every original source before the first edit, including sources
-	// that an earlier planned move will relocate.
+	// Preflight dependent cleanup operations before the first edit, including
+	// sources that an earlier planned move will relocate. Archives are independent
+	// and are checked individually so one failure cannot block the rest.
 	checked := make(map[*fileRecord]bool)
 	for _, op := range p.operations {
 		if err := contextError(p.ctx); err != nil {
 			return err
+		}
+		if op.kind == "extract" {
+			continue // Independent archives are checked immediately before each attempt.
 		}
 		if err := p.verifyParents(op.root, op.from); err != nil {
 			return err
@@ -289,25 +293,27 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 		}
 		return file
 	}
-	var deleted, moved, directories, extracted int
+	var deleted, moved, directories, extracted, failedArchives int
 	var bytesDeleted int64
 	for _, op := range p.operations {
 		if err := contextError(p.ctx); err != nil {
 			return err
 		}
-		if err := p.verifyParents(op.root, op.from); err != nil {
+		if op.kind == "extract" {
+			if err := p.executeExtraction(op, dryRun); err != nil {
+				if canceled := contextError(p.ctx); canceled != nil {
+					return canceled
+				}
+				failedArchives++
+				logger.Errorf("Skipping archive %q after extraction failure: %v", op.from, err)
+				continue
+			}
+		} else if err := p.verifyParents(op.root, op.from); err != nil {
 			return err
 		}
-		if !dryRun {
+		if !dryRun && op.kind != "extract" {
 			file := lookup(op.file)
 			switch op.kind {
-			case "extract":
-				if err := p.verifyParents(op.root, op.to); err != nil {
-					return err
-				}
-				if err := extractArchive(p.ctx, file, op.to, p.dirs[pathKey(filepath.Dir(op.to))], p.passwords); err != nil {
-					return fmt.Errorf("extract %q: %w", file.path, err)
-				}
 			case "move":
 				if err := p.verifyParents(op.root, op.to); err != nil {
 					return err
@@ -365,5 +371,25 @@ func (p *plan) execute(dryRun bool, logger *log.Logger) error {
 	} else {
 		logger.Infof("%d files deleted (%s), %d files moved, %d empty directories removed, %d archives extracted", deleted, formatBytes(bytesDeleted), moved, directories, extracted)
 	}
+	if failedArchives != 0 {
+		logger.Warnf("Extraction finished: %d archives failed; remaining archives processed", failedArchives)
+		return fmt.Errorf("%d archives failed; remaining archives processed (see errors above)", failedArchives)
+	}
 	return nil
+}
+
+func (p *plan) executeExtraction(op operation, dryRun bool) error {
+	if err := p.verifyParents(op.root, op.from); err != nil {
+		return err
+	}
+	if err := p.verifyParents(op.root, op.to); err != nil {
+		return err
+	}
+	if err := op.file.verify(); err != nil {
+		return err
+	}
+	if dryRun {
+		return nil
+	}
+	return extractArchive(p.ctx, op.file, op.to, p.dirs[pathKey(filepath.Dir(op.to))], p.passwords)
 }

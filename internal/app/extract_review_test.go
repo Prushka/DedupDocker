@@ -145,6 +145,7 @@ func (ctx *extractReviewContext) Err() error {
 func TestExtractReviewMissingPublishedDirectoryRetainsArchive(t *testing.T) {
 	requireArchiveTool(t)
 	root := t.TempDir()
+	writeArchiveZIP(t, filepath.Join(root, "z-next.zip"), map[string]string{"payload.txt": "next archive payload"})
 	var data bytes.Buffer
 	writer := tar.NewWriter(&data)
 	if err := writer.WriteHeader(&tar.Header{Name: "empty-child/", Typeflag: tar.TypeDir, Mode: 0755}); err != nil {
@@ -172,6 +173,9 @@ func TestExtractReviewMissingPublishedDirectoryRetainsArchive(t *testing.T) {
 	retained, err := os.ReadFile(archive)
 	if err != nil || !bytes.Equal(retained, data.Bytes()) {
 		t.Fatalf("original archive was not retained intact: %v", err)
+	}
+	if actual, err := os.ReadFile(filepath.Join(root, "z-next", "payload.txt")); err != nil || string(actual) != "next archive payload" {
+		t.Fatalf("post-publication failure prevented extraction of the next archive: %q, %v", actual, err)
 	}
 }
 

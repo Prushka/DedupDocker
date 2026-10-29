@@ -146,4 +146,33 @@ if docker run --rm --network none --read-only \
   exit 1
 fi
 test "$before" = "$(snapshot "$data")"
-echo 'Extract passed extended attributes, dry-run, read-only volumes, passwords, compressed streams, compound archives, empty directories, WIM shared data, long Unicode names, collisions and corrupt archive preservation.'
+
+for run_user in 0:0 "$(id -u):$(id -g)"; do
+  data="$fixture/continue-${run_user/:/-}"
+  mkdir -p "$data"
+  printf 'broken archive' > "$data/a-broken.zip"
+  original="$(sha256sum "$data/a-broken.zip")"
+  python3 - "$data/z-valid.zip" <<'PY'
+import sys
+import zipfile
+
+with zipfile.ZipFile(sys.argv[1], 'w') as archive:
+    archive.writestr('payload.txt', 'next archive payload')
+PY
+  if logs="$(docker run --rm --network none --read-only --user "$run_user" \
+    --mount "type=bind,src=$data,dst=/dedup" \
+    -e MODE=Extract -e DRY_RUN=false "$LOCAL_IMAGE" 2>&1)"; then
+    echo 'A partial extraction failure unexpectedly returned success.' >&2
+    exit 1
+  fi
+  printf '%s\n' "$logs"
+  grep -Fq 'Skipping archive' <<< "$logs"
+  grep -Fq '1 archives extracted' <<< "$logs"
+  grep -Fq '1 archives failed' <<< "$logs"
+  test "$original" = "$(sha256sum "$data/a-broken.zip")"
+  test "$(cat "$data/z-valid/payload.txt")" = 'next archive payload'
+  test ! -e "$data/z-valid.zip"
+  test -z "$(find "$data" -name '.dedup-*' -print -quit)"
+done
+
+echo 'Extract passed extended attributes, dry-run, read-only volumes, passwords, compressed streams, compound archives, empty directories, WIM shared data, long Unicode names, collisions, corrupt archive preservation and continuation after failures.'

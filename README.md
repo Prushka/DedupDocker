@@ -129,8 +129,12 @@ headers, including Git archive comments, are supported; globals that change path
 sizes or modification dates retain the original with an error.
 Literal backslashes in native tar/gzip filenames are preserved on Linux and
 refused on Windows, where they cannot be represented as filename characters.
-Split/multipart archives are not assembled automatically. Earlier completed
-archives remain extracted if a later archive fails. Names longer than 255 UTF-8
+Split/multipart archives are not assembled automatically. If an archive fails,
+Extract logs the error and attempts the remaining archives, including those in
+later roots. Failed originals are retained; earlier completed extractions remain.
+The final summary counts successful extractions and failures, and the command
+returns a nonzero exit status after the batch if any archives failed. Cancellation
+still stops the run. Names longer than 255 UTF-8
 bytes are shortened to fit Linux filesystems, preserving file extensions where
 they fit. Numbered suffixes resolve collisions, existing shorter names keep their
 names, and directory hierarchies stay intact. Names within the limit are unchanged.
@@ -152,8 +156,8 @@ docker run --rm --mount type=bind,src=/path/to/files,dst=/dedup \
 
 Moves never overwrite an existing path. The app skips symbolic links, checks
 source identities and modification times, and rechecks duplicate contents
-before deletion. A detected change or I/O failure stops processing and returns
-a nonzero exit status. Earlier completed edits remain; operations are not a
+before deletion. In other modes, a detected change or I/O failure stops processing
+and returns a nonzero exit status. Earlier completed edits remain; operations are not a
 transaction. Native moves preserve file attributes and additional streams.
 Copy-based moves preserve file permissions and modification time and verify the
 copied contents before removing the source. Extra attributes and named streams
